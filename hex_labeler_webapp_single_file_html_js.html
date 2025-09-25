@@ -31,6 +31,23 @@
     .muted { color:#666; font-size: 12px; }
     .toolbar { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .stack { display:flex; flex-direction:column; gap:6px; }
+    .palette { margin-top: 10px; display:flex; gap:10px; align-items:center; }
+    .draggable-chip { padding:8px 12px; border:1px dashed #666; border-radius:16px; background:#fff; font-size:12px; cursor:grab; user-select:none; }
+    .draggable-chip:active { cursor:grabbing; }
+    .viewport.droppable::after {
+      content:'Drop label onto map';
+      position:absolute;
+      inset:12px;
+      border:2px dashed rgba(255,255,255,0.6);
+      border-radius:12px;
+      color:#fff;
+      font-size:14px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      pointer-events:none;
+      background:rgba(0,0,0,0.25);
+    }
 
     /* Label visuals */
     .label { pointer-events: all; cursor: pointer; }
@@ -56,8 +73,10 @@
     <h1>Hex Labeler</h1>
 
     <div class="hint">
-      1) Load the map image. 2) Click anywhere to add a label — it will snap to the detected hex. 3) Edit the details and repeat.
-      Your work is saved automatically in localStorage. Scroll to zoom and drag the map background to pan.
+      1) Load the map image. 2) Click the map or drag the "Drag to add label" chip onto a hex — it will snap to the detected grid.
+      3) Edit the details and repeat. Your work is saved automatically in localStorage. Scroll to zoom and drag the map background
+      to pan.
+
     </div>
 
     <h2>Project</h2>
@@ -91,6 +110,9 @@
       <label>Box padding
         <input id="pad" type="number" step="1" value="4" />
       </label>
+    </div>
+    <div class="palette">
+      <div id="newLabelChip" class="draggable-chip" draggable="true">Drag to add label</div>
     </div>
     <p class="muted">Tip: Edit a label by clicking it. Delete with the Delete key or the button in the editor.
       Hold <span class="kbd">Shift</span> while clicking to duplicate a label.</p>
@@ -324,21 +346,27 @@
     overlay.addEventListener('click', (e) => {
       if (isPanning) return;
       const [ix, iy] = clientToImageXY(e);
+      const dupFrom = e.shiftKey ? labels.find(l => l.id === selectedId) : null;
+      createLabelAt(ix, iy, { duplicateFrom: dupFrom });
+    });
+
+    function createLabelAt(ix, iy, { duplicateFrom = null } = {}) {
       const snap = snapToGrid(ix, iy);
       const x = snap ? snap.x : ix;
       const y = snap ? snap.y : iy;
-      const dupFrom = e.shiftKey ? labels.find(l => l.id === selectedId) : null;
       const newLabel = {
         id: crypto.randomUUID(),
-        x, y,
+        x,
+        y,
         hex: snap ? snap.id : '',
-        text: dupFrom ? dupFrom.text : ''
+        text: duplicateFrom ? duplicateFrom.text : ''
       };
       labels.push(newLabel);
       selectedId = newLabel.id;
       openEditor(newLabel.id, true);
-      draw(); saveState();
-    });
+      draw();
+      saveState();
+    }
 
     function openEditor(id, isNew = false) {
       selectedId = id;
@@ -584,6 +612,47 @@
         applyView();
       }
     }
+
+    // Drag-and-drop label creation
+    const newLabelChip = document.getElementById('newLabelChip');
+    newLabelChip.addEventListener('dragstart', (evt) => {
+      evt.dataTransfer.effectAllowed = 'copy';
+      evt.dataTransfer.setData('application/x-hexlabel', 'new');
+      viewport.classList.add('droppable');
+    });
+
+    newLabelChip.addEventListener('dragend', () => {
+      viewport.classList.remove('droppable');
+    });
+
+    function allowLabelDrop(evt) {
+      if (!evt.dataTransfer) return;
+      if (evt.dataTransfer.types.includes('application/x-hexlabel')) {
+        evt.preventDefault();
+        evt.dataTransfer.dropEffect = 'copy';
+      }
+    }
+
+    viewport.addEventListener('dragover', allowLabelDrop);
+    viewport.addEventListener('dragenter', allowLabelDrop);
+    viewport.addEventListener('dragleave', (evt) => {
+      if (evt.relatedTarget && viewport.contains(evt.relatedTarget)) return;
+      viewport.classList.remove('droppable');
+    });
+
+    viewport.addEventListener('drop', (evt) => {
+      if (!evt.dataTransfer) return;
+      const marker = evt.dataTransfer.getData('application/x-hexlabel');
+      viewport.classList.remove('droppable');
+      if (marker !== 'new') return;
+      evt.preventDefault();
+      const rect = mapImg.getBoundingClientRect();
+      if (evt.clientX < rect.left || evt.clientX > rect.right || evt.clientY < rect.top || evt.clientY > rect.bottom) {
+        return;
+      }
+      const [ix, iy] = clientToImageXY(evt);
+      createLabelAt(ix, iy);
+    });
   </script>
 </body>
 </html>
