@@ -220,7 +220,7 @@
     // --- Image loading
     function setImage(src) {
       return new Promise((resolve, reject) => {
-        mapImg.onload = () => { sizeOverlay(); draw(); saveState(); resolve(); };
+        mapImg.onload = () => { sizeOverlay(); draw(); resolve(); };
         mapImg.onerror = (e) => reject(e);
         mapImg.src = src;
       });
@@ -473,9 +473,13 @@
 
     // Initial image: try to preload the provided path if available
     (async function init(){
-      // If you have a local image path you can set it here; otherwise use the file/URL inputs.
-      // Example: setImage('/mnt/data/d8eeab50-fecb-4d99-a0ae-ef04df606304.png').catch(()=>{});
       draw();
+      // Attempt to load the bundled Dolmenwood map by default. Fallback to any saved state if loading fails.
+      try {
+        await setImage('Dolmenwood_Blank_Hex_Map.png');
+      } catch(err) {
+        console.warn('Failed to load bundled map image:', err);
+      }
       // Attempt to load any saved state for default project
       loadState();
     })();
