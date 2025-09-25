@@ -10,11 +10,13 @@
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; }
     body { display: grid; grid-template-columns: var(--panel-w) 1fr; gap: 0; }
     aside { padding: 14px 14px 18px; border-right: 1px solid #ddd; overflow:auto; }
-    main { position: relative; overflow: auto; }
+    main { position: relative; overflow: hidden; background:#111; }
 
-    .map-wrap { position: relative; width: 100%; height: 100%; }
-    .map-wrap img { display: block; max-width: none; user-select: none; }
-    .svg-overlay { position:absolute; inset:0; pointer-events: none; }
+    .viewport { position: relative; width: 100%; height: 100%; overflow:hidden; cursor: grab; }
+    .viewport.is-panning { cursor: grabbing; }
+    .canvas-wrap { position:absolute; inset:0; transform-origin: 0 0; }
+    .canvas-wrap img { display:block; max-width:none; user-select:none; }
+    .svg-overlay { position:absolute; inset:0; pointer-events:none; }
 
     h1 { font-size: 16px; margin: 0 0 6px; color: var(--accent); }
     h2 { font-size: 13px; margin: 14px 0 6px; color: var(--accent); }
@@ -33,8 +35,11 @@
     /* Label visuals */
     .label { pointer-events: all; cursor: pointer; }
     .label rect { fill: rgba(255,255,255,0.8); stroke:#111; stroke-width:0.75; rx:4; ry:4; }
-    .label text { font: 12px/1.1 ui-sans-serif, system-ui, -apple-system; fill:#111; dominant-baseline: middle; text-anchor: middle; }
+    .label text { font-family: ui-sans-serif, system-ui, -apple-system; line-height:1.1; fill:#111; dominant-baseline: middle; text-anchor: middle; }
     .label .hexid { font-size: 10px; fill:#444; }
+
+    .grid-cell { fill: none; stroke: rgba(0,0,0,0.25); stroke-width:1; pointer-events:none; }
+    .grid-label { font-family: ui-sans-serif, system-ui, -apple-system; font-size:11px; fill:rgba(0,0,0,0.4); pointer-events:none; }
 
     .hint { background:#f6f7f9; border:1px dashed #cfd6e0; padding:8px; border-radius:8px; font-size:12px; }
     .kbd { padding:0 6px; border:1px solid #aaa; border-bottom-width:2px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#fff; font-size:11px; }
@@ -51,8 +56,8 @@
     <h1>Hex Labeler</h1>
 
     <div class="hint">
-      1) Load the map image. 2) Click anywhere to add a label. 3) Optionally enable grid snap and tune the grid.
-      Your work is saved automatically in localStorage.
+      1) Load the map image. 2) Click anywhere to add a label — it will snap to the detected hex. 3) Edit the details and repeat.
+      Your work is saved automatically in localStorage. Scroll to zoom and drag the map background to pan.
     </div>
 
     <h2>Project</h2>
@@ -75,40 +80,8 @@
       <button id="clearBtn" class="warn">Clear labels</button>
     </div>
 
-    <h2>Grid snap (optional)</h2>
-    <label><input id="snap" type="checkbox" /> Snap to hex grid</label>
-    <div class="row">
-      <label>Origin X
-        <input id="gx" type="number" step="1" value="120" />
-      </label>
-      <label>Origin Y
-        <input id="gy" type="number" step="1" value="120" />
-      </label>
-    </div>
-    <div class="row">
-      <label>Hex radius R
-        <input id="gr" type="number" step="1" value="45" />
-      </label>
-      <label>Orientation
-        <select id="gori">
-          <option value="flat" selected>Flat‑topped</option>
-          <option value="pointy">Pointy‑topped</option>
-        </select>
-      </label>
-    </div>
-    <div class="row">
-      <label>Offset mode
-        <select id="goffset">
-          <option value="odd-q" selected>odd‑q columns</option>
-          <option value="even-q">even‑q columns</option>
-          <option value="odd-r">odd‑r rows</option>
-          <option value="even-r">even‑r rows</option>
-        </select>
-      </label>
-      <label>Show grid
-        <input id="showGrid" type="checkbox" />
-      </label>
-    </div>
+    <h2>Grid</h2>
+    <label><input id="showGrid" type="checkbox" checked /> Show hex overlay</label>
 
     <h2>Label style</h2>
     <div class="row">
@@ -124,9 +97,11 @@
   </aside>
 
   <main>
-    <div id="stage" class="map-wrap">
-      <img id="mapImg" alt="Map" />
-      <svg id="overlay" class="svg-overlay"></svg>
+    <div id="viewport" class="viewport">
+      <div id="canvasWrap" class="canvas-wrap">
+        <img id="mapImg" alt="Map" />
+        <svg id="overlay" class="svg-overlay"></svg>
+      </div>
     </div>
   </main>
 
@@ -159,7 +134,7 @@
 
     function saveState() {
       const id = mapId.value.trim() || 'default';
-      const data = { labels, grid: gridParams(), imgMeta: currentImageMeta() };
+      const data = { labels, options: currentOptions(), imgMeta: currentImageMeta() };
       localStorage.setItem(storageKey(id), JSON.stringify(data));
     }
 
@@ -170,7 +145,7 @@
       try {
         const obj = JSON.parse(raw);
         labels = obj.labels || [];
-        setGridParams(obj.grid || {});
+        applyOptions(obj.options || {});
         draw();
         return true;
       } catch { return false; }
@@ -185,7 +160,8 @@
     const mapId = document.getElementById('mapId');
     const mapImg = document.getElementById('mapImg');
     const overlay = document.getElementById('overlay');
-    const stage = document.getElementById('stage');
+    const viewport = document.getElementById('viewport');
+    const canvasWrap = document.getElementById('canvasWrap');
 
     // Controls
     const fileInput = document.getElementById('fileInput');
@@ -196,12 +172,6 @@
     const importBtn = document.getElementById('importBtn');
     const clearBtn = document.getElementById('clearBtn');
 
-    const snap = document.getElementById('snap');
-    const gx = document.getElementById('gx');
-    const gy = document.getElementById('gy');
-    const gr = document.getElementById('gr');
-    const gori = document.getElementById('gori');
-    const goffset = document.getElementById('goffset');
     const showGrid = document.getElementById('showGrid');
 
     const fontSize = document.getElementById('fontSize');
@@ -214,13 +184,16 @@
     const f_text = document.getElementById('f_text');
     const delBtn = document.getElementById('delBtn');
 
-    let labels = []; // {id, x, y, text}
+    let labels = []; // {id, x, y, text, hex}
     let selectedId = null;
+    let gridInfo = null;
+
+    const viewState = { scale: 1, x: 0, y: 0 };
 
     // --- Image loading
     function setImage(src) {
       return new Promise((resolve, reject) => {
-        mapImg.onload = () => { sizeOverlay(); draw(); resolve(); };
+        mapImg.onload = () => { sizeOverlay(); analyzeImage().then(() => { fitToWindow(); draw(); }).finally(resolve); };
         mapImg.onerror = (e) => reject(e);
         mapImg.src = src;
       });
@@ -239,11 +212,11 @@
       setImage(u).then(() => { if (!loadState()) labels = []; draw(); });
     });
 
-    fitBtn.addEventListener('click', () => stage.scrollTo({ top: 0, left: 0, behavior: 'smooth' }));
+    fitBtn.addEventListener('click', () => fitToWindow(true));
 
     // --- Export/Import
     exportBtn.addEventListener('click', () => {
-      const data = { labels, grid: gridParams(), img: currentImageMeta() };
+      const data = { labels, options: currentOptions(), img: currentImageMeta() };
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -260,7 +233,7 @@
         try {
           const data = JSON.parse(text);
           labels = data.labels || [];
-          setGridParams(data.grid || {});
+          applyOptions(data.options || {});
           draw(); saveState();
         } catch(err) { alert('Invalid JSON'); }
       };
@@ -269,92 +242,32 @@
 
     clearBtn.addEventListener('click', () => {
       if (!confirm('Delete all labels?')) return;
-      labels = []; draw(); saveState();
+      labels = []; selectedId = null; draw(); saveState();
     });
 
     // --- Grid helpers
-    function gridParams() {
-      return {
-        enabled: snap.checked,
-        x: +gx.value, y: +gy.value, r: +gr.value,
-        orientation: gori.value, offset: goffset.value, show: showGrid.checked,
-      };
-    }
-    function setGridParams(p) {
-      if (typeof p.enabled === 'boolean') snap.checked = p.enabled;
-      if (p.x != null) gx.value = p.x; if (p.y != null) gy.value = p.y;
-      if (p.r != null) gr.value = p.r;
-      if (p.orientation) gori.value = p.orientation;
-      if (p.offset) goffset.value = p.offset;
-      if (typeof p.show === 'boolean') showGrid.checked = p.show;
+    function currentOptions() {
+      return { showGrid: showGrid.checked, fontSize: +fontSize.value, padding: +pad.value };
     }
 
-    function axialRound(q, r) {
-      // cube rounding
-      let x = q, z = r, y = -x - z;
-      let rx = Math.round(x), ry = Math.round(y), rz = Math.round(z);
-      const x_diff = Math.abs(rx - x), y_diff = Math.abs(ry - y), z_diff = Math.abs(rz - z);
-      if (x_diff > y_diff && x_diff > z_diff) rx = -ry - rz;
-      else if (y_diff > z_diff) ry = -rx - rz;
-      else rz = -rx - ry;
-      return [rx, rz];
-    }
-
-    function worldToAxial(x, y) {
-      const r = +gr.value; const ori = gori.value; const off = goffset.value;
-      const ox = +gx.value; const oy = +gy.value;
-      if (ori === 'flat') {
-        // flat‑topped, odd/even‑q columns
-        const q = ( (x - ox) * 2/3 ) / r;
-        const rAx = ( (- (x - ox) / 3) + (Math.sqrt(3)/3)*(y - oy) ) / r;
-        let [aq, ar] = axialRound(q, rAx);
-        // offset adjustment when producing center
-        return [aq, ar];
-      } else {
-        // pointy‑topped, odd/even‑r rows
-        const q = ( (Math.sqrt(3)/3)*(x - ox) - (1/3)*(y - oy) ) / r;
-        const rAx = ( (2/3)*(y - oy) ) / r;
-        let [aq, ar] = axialRound(q, rAx);
-        return [aq, ar];
-      }
-    }
-
-    function axialToPixel(q, r) {
-      const R = +gr.value; const ori = gori.value; const ox = +gx.value; const oy = +gy.value;
-      if (ori === 'flat') {
-        const px = R * (3/2 * q) + ox;
-        const py = R * (Math.sqrt(3)/2 * q + Math.sqrt(3) * r) + oy;
-        return [px, py];
-      } else {
-        const px = R * (Math.sqrt(3) * q + Math.sqrt(3)/2 * r) + ox;
-        const py = R * (3/2 * r) + oy;
-        return [px, py];
-      }
-    }
-
-    function nearestHexCenter(x, y) {
-      const [q, r] = worldToAxial(x, y);
-      return axialToPixel(q, r);
+    function applyOptions(opts) {
+      if ('showGrid' in opts) showGrid.checked = !!opts.showGrid;
+      if (opts.fontSize != null) fontSize.value = opts.fontSize;
+      if (opts.padding != null) pad.value = opts.padding;
     }
 
     // Draw grid visualization
     function drawGrid() {
-      const p = gridParams();
-      if (!p.show) return '';
-      const w = mapImg.naturalWidth, h = mapImg.naturalHeight;
-      const R = p.r; const ori = p.orientation;
-      const out = [];
-      // iterate a reasonable range
-      const cols = Math.ceil(w / (R * (ori==='flat' ? 1.5 : Math.sqrt(3)) )) + 8;
-      const rows = Math.ceil(h / (R * (ori==='flat' ? Math.sqrt(3) : 1.5) )) + 8;
-      for (let qi = -cols; qi < cols; qi++) {
-        for (let ri = -rows; ri < rows; ri++) {
-          const [cx, cy] = axialToPixel(qi, ri);
-          if (cx < -R || cy < -R || cx > w+R || cy > h+R) continue;
-          out.push(`<circle cx="${cx}" cy="${cy}" r="1.5" fill="#888" opacity="0.5" />`);
-        }
+      if (!showGrid.checked || !gridInfo) return '';
+      const pieces = [];
+      const { cells, radius } = gridInfo;
+      for (const cell of cells) {
+        pieces.push(`<path class="grid-cell" d="${hexPath(cell.x, cell.y, radius)}" />`);
       }
-      return out.join('');
+      for (const cell of cells) {
+        pieces.push(`<text class="grid-label" x="${cell.x}" y="${cell.y+4}">${cell.id}</text>`);
+      }
+      return pieces.join('');
     }
 
     // --- Coordinate helpers (image space)
@@ -370,6 +283,8 @@
     function sizeOverlay() {
       overlay.setAttribute('viewBox', `0 0 ${mapImg.naturalWidth} ${mapImg.naturalHeight}`);
       overlay.setAttribute('preserveAspectRatio', 'xMinYMin meet');
+      canvasWrap.style.width = `${mapImg.naturalWidth}px`;
+      canvasWrap.style.height = `${mapImg.naturalHeight}px`;
     }
 
     // --- Label rendering
@@ -407,34 +322,45 @@
 
     // --- Interactions
     overlay.addEventListener('click', (e) => {
+      if (isPanning) return;
       const [ix, iy] = clientToImageXY(e);
-      const p = gridParams();
-      const [x, y] = (p.enabled ? nearestHexCenter(ix, iy) : [ix, iy]);
+      const snap = snapToGrid(ix, iy);
+      const x = snap ? snap.x : ix;
+      const y = snap ? snap.y : iy;
       const dupFrom = e.shiftKey ? labels.find(l => l.id === selectedId) : null;
       const newLabel = {
         id: crypto.randomUUID(),
         x, y,
-        hex: '',
+        hex: snap ? snap.id : '',
         text: dupFrom ? dupFrom.text : ''
       };
       labels.push(newLabel);
       selectedId = newLabel.id;
-      openEditor(newLabel.id);
+      openEditor(newLabel.id, true);
       draw(); saveState();
     });
 
-    function openEditor(id) {
+    function openEditor(id, isNew = false) {
       selectedId = id;
       const l = labels.find(x => x.id === id); if (!l) return;
       f_hex.value = l.hex || '';
       f_xy.value = `${l.x.toFixed(1)}, ${l.y.toFixed(1)}`;
       f_text.value = l.text || '';
       delBtn.onclick = () => { if (confirm('Delete this label?')) { labels = labels.filter(x => x.id !== id); dlg.close(); draw(); saveState(); } };
+      dlg.dataset.isNew = isNew ? '1' : '';
       dlg.showModal();
     }
 
     dlg.addEventListener('close', () => {
-      if (dlg.returnValue !== 'ok') return;
+      const isNew = dlg.dataset.isNew === '1';
+      if (dlg.returnValue !== 'ok') {
+        if (isNew) {
+          labels = labels.filter(x => x.id !== selectedId);
+          selectedId = null;
+          draw(); saveState();
+        }
+        return;
+      }
       const l = labels.find(x => x.id === selectedId); if (!l) return;
       l.hex = f_hex.value.trim();
       l.text = f_text.value;
@@ -453,8 +379,10 @@
       function move(ev){
         const [mx, my] = clientToImageXY(ev);
         let nx = mx + ox, ny = my + oy;
-        if (snap.checked) [nx, ny] = nearestHexCenter(nx, ny);
-        l.x = nx; l.y = ny; draw();
+        const snap = snapToGrid(nx, ny);
+        if (snap) { l.x = snap.x; l.y = snap.y; l.hex = snap.id; }
+        else { l.x = nx; l.y = ny; }
+        draw();
       }
       function up(){ window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); saveState(); }
       window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
@@ -466,7 +394,7 @@
     });
 
     // Persist UI -> redraw
-    [snap, gx, gy, gr, gori, goffset, showGrid, fontSize, pad, mapId].forEach(inp => {
+    [showGrid, fontSize, pad, mapId].forEach(inp => {
       inp.addEventListener('input', () => { draw(); saveState(); });
       inp.addEventListener('change', () => { draw(); saveState(); });
     });
@@ -483,6 +411,179 @@
       // Attempt to load any saved state for default project
       loadState();
     })();
+
+    // --- Grid analysis
+    const gridPresets = {
+      'dolmenwood_blank_hex_map.png': { cols: 19, rows: 12 }
+    };
+
+    async function analyzeImage() {
+      const w = mapImg.naturalWidth, h = mapImg.naturalHeight;
+      if (!w || !h) { gridInfo = null; return; }
+      const canvas = document.createElement('canvas');
+      const maxDim = 1000;
+      const scale = Math.min(1, maxDim / Math.max(w, h));
+      const sw = Math.max(1, Math.round(w * scale));
+      const sh = Math.max(1, Math.round(h * scale));
+      canvas.width = sw; canvas.height = sh;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(mapImg, 0, 0, sw, sh);
+      let data;
+      try {
+        data = ctx.getImageData(0, 0, sw, sh).data;
+      } catch(err) {
+        console.warn('Unable to analyze grid from image', err);
+        gridInfo = null;
+        return;
+      }
+      let minX = sw, minY = sh, maxX = 0, maxY = 0;
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const idx = (y * sw + x) * 4;
+          const r = data[idx], g = data[idx+1], b = data[idx+2];
+          if (r < 245 || g < 245 || b < 245) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (minX > maxX || minY > maxY) {
+        gridInfo = null;
+        return;
+      }
+      const bounds = {
+        left: minX / scale,
+        top: minY / scale,
+        right: (maxX + 1) / scale,
+        bottom: (maxY + 1) / scale
+      };
+      const fileName = (mapImg.src.split('/').pop() || '').toLowerCase();
+      const preset = gridPresets[fileName] || { cols: 19, rows: 12 };
+      const width = bounds.right - bounds.left;
+      const height = bounds.bottom - bounds.top;
+      const rW = width / (1.5 * (preset.cols - 1) + 2);
+      const rH = (height / preset.rows) / Math.sqrt(3);
+      const radius = (rW + rH) / 2;
+      const hexHeight = Math.sqrt(3) * radius;
+      const firstX = bounds.left + radius;
+      const firstY = bounds.top + hexHeight / 2;
+      const cells = [];
+      for (let col = 0; col < preset.cols; col++) {
+        const baseX = firstX + col * (1.5 * radius);
+        const offsetY = (col % 2 === 0) ? 0 : hexHeight / 2;
+        for (let row = 0; row < preset.rows; row++) {
+          const cy = firstY + row * hexHeight + offsetY;
+          const id = `${String(col + 1).padStart(2, '0')}${String(row + 1).padStart(2, '0')}`;
+          cells.push({ id, col, row, x: baseX, y: cy });
+        }
+      }
+      gridInfo = { bounds, radius, hexHeight, cols: preset.cols, rows: preset.rows, cells };
+    }
+
+    function hexPath(cx, cy, r) {
+      const pts = [];
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 180) * (60 * i + 30);
+        const px = cx + r * Math.cos(angle);
+        const py = cy + r * Math.sin(angle);
+        pts.push(`${px},${py}`);
+      }
+      return `M${pts.join(' L')} Z`;
+    }
+
+    function snapToGrid(x, y) {
+      if (!gridInfo) return null;
+      let best = null; let bestDist = Infinity;
+      for (const cell of gridInfo.cells) {
+        const dx = cell.x - x;
+        const dy = cell.y - y;
+        const dist = dx*dx + dy*dy;
+        if (dist < bestDist) { bestDist = dist; best = cell; }
+      }
+      if (!best) return null;
+      return { ...best };
+    }
+
+    // --- Zoom & pan
+    let isPanning = false;
+    let panPointer = null;
+    let panStart = null;
+
+    viewport.addEventListener('pointerdown', (evt) => {
+      if (evt.button !== 0) return;
+      const target = evt.target;
+      if (target.closest('svg') && target.closest('.label')) return; // let label dragging handle it
+      isPanning = true;
+      panPointer = evt.pointerId;
+      panStart = { x: evt.clientX - viewState.x, y: evt.clientY - viewState.y };
+      viewport.classList.add('is-panning');
+      if (viewport.setPointerCapture) viewport.setPointerCapture(evt.pointerId);
+    });
+
+    viewport.addEventListener('pointermove', (evt) => {
+      if (!isPanning || evt.pointerId !== panPointer) return;
+      viewState.x = evt.clientX - panStart.x;
+      viewState.y = evt.clientY - panStart.y;
+      applyView();
+    });
+
+    viewport.addEventListener('pointerup', endPan);
+    viewport.addEventListener('pointercancel', endPan);
+
+    function endPan(evt) {
+      if (!isPanning || evt.pointerId !== panPointer) return;
+      isPanning = false;
+      panPointer = null;
+      viewport.classList.remove('is-panning');
+      if (viewport.hasPointerCapture && viewport.hasPointerCapture(evt.pointerId)) {
+        viewport.releasePointerCapture(evt.pointerId);
+      }
+    }
+
+    viewport.addEventListener('wheel', (evt) => {
+      evt.preventDefault();
+      const scaleFactor = Math.exp(-evt.deltaY * 0.0015);
+      const newScale = clamp(viewState.scale * scaleFactor, 0.25, 4);
+      const rect = viewport.getBoundingClientRect();
+      const offsetX = evt.clientX - rect.left;
+      const offsetY = evt.clientY - rect.top;
+      const dx = offsetX - viewState.x;
+      const dy = offsetY - viewState.y;
+      const ratio = newScale / viewState.scale;
+      viewState.x = offsetX - dx * ratio;
+      viewState.y = offsetY - dy * ratio;
+      viewState.scale = newScale;
+      applyView();
+    }, { passive: false });
+
+    function applyView() {
+      canvasWrap.style.transform = `translate(${viewState.x}px, ${viewState.y}px) scale(${viewState.scale})`;
+    }
+
+    function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+
+    function fitToWindow(animated = false) {
+      const vw = viewport.clientWidth;
+      const vh = viewport.clientHeight;
+      if (!mapImg.naturalWidth || !mapImg.naturalHeight) return;
+      const scale = Math.min(vw / mapImg.naturalWidth, vh / mapImg.naturalHeight) || 1;
+      const newX = (vw - mapImg.naturalWidth * scale) / 2;
+      const newY = (vh - mapImg.naturalHeight * scale) / 2;
+      viewState.scale = scale;
+      viewState.x = newX;
+      viewState.y = newY;
+      if (animated) {
+        canvasWrap.style.transition = 'transform 0.2s ease';
+        requestAnimationFrame(() => {
+          applyView();
+          setTimeout(() => { canvasWrap.style.transition = ''; }, 200);
+        });
+      } else {
+        applyView();
+      }
+    }
   </script>
 </body>
 </html>
