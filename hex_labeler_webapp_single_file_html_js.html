@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hex Labeler</title>
+  <style>
+    :root { --panel-w: 340px; --accent: #222; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; }
+    body { display: grid; grid-template-columns: var(--panel-w) 1fr; gap: 0; }
+    aside { padding: 14px 14px 18px; border-right: 1px solid #ddd; overflow:auto; }
+    main { position: relative; overflow: auto; }
+
+    .map-wrap { position: relative; width: 100%; height: 100%; }
+    .map-wrap img { display: block; max-width: none; user-select: none; }
+    .svg-overlay { position:absolute; inset:0; pointer-events: none; }
+
+    h1 { font-size: 16px; margin: 0 0 6px; color: var(--accent); }
+    h2 { font-size: 13px; margin: 14px 0 6px; color: var(--accent); }
+    label { display:block; font-size: 12px; margin: 8px 0 4px; }
+    input[type="text"], input[type="number"], input[type="file"], textarea { width: 100%; padding: 8px; border:1px solid #ccc; border-radius:8px; font-size: 13px; }
+    input[type="checkbox"] { transform: translateY(1px); }
+    .row { display:flex; gap: 8px; }
+    .row > * { flex: 1; }
+    button { padding: 8px 10px; border:1px solid #bbb; background:#f8f8f8; border-radius:10px; cursor:pointer; font-size: 13px; }
+    button.primary { background:#222; color:#fff; border-color:#222; }
+    button.warn { background:#fff3f3; border-color:#dd7777; color:#b10000; }
+    .muted { color:#666; font-size: 12px; }
+    .toolbar { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .stack { display:flex; flex-direction:column; gap:6px; }
+
+    /* Label visuals */
+    .label { pointer-events: all; cursor: pointer; }
+    .label rect { fill: rgba(255,255,255,0.8); stroke:#111; stroke-width:0.75; rx:4; ry:4; }
+    .label text { font: 12px/1.1 ui-sans-serif, system-ui, -apple-system; fill:#111; dominant-baseline: middle; text-anchor: middle; }
+    .label .hexid { font-size: 10px; fill:#444; }
+
+    .hint { background:#f6f7f9; border:1px dashed #cfd6e0; padding:8px; border-radius:8px; font-size:12px; }
+    .kbd { padding:0 6px; border:1px solid #aaa; border-bottom-width:2px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#fff; font-size:11px; }
+
+    /* Modal */
+    dialog { border:none; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); padding: 0; }
+    .modal { padding: 16px; min-width: 340px; }
+    .modal h3 { margin: 0 0 8px; font-size: 15px; }
+    .modal .actions { display:flex; gap:8px; justify-content:flex-end; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <aside>
+    <h1>Hex Labeler</h1>
+
+    <div class="hint">
+      1) Load the map image. 2) Click anywhere to add a label. 3) Optionally enable grid snap and tune the grid.
+      Your work is saved automatically in localStorage.
+    </div>
+
+    <h2>Project</h2>
+    <label>Map ID (used for saving)
+      <input id="mapId" type="text" placeholder="e.g. dolmenwood" value="dolmenwood" />
+    </label>
+    <div class="row">
+      <label>Load image file
+        <input id="fileInput" type="file" accept="image/*" />
+      </label>
+      <label>or URL
+        <input id="urlInput" type="text" placeholder="https://..." />
+      </label>
+    </div>
+    <div class="toolbar">
+      <button id="loadUrlBtn">Load URL</button>
+      <button id="fitBtn">Fit to window</button>
+      <button id="exportBtn">Export JSON</button>
+      <button id="importBtn">Import JSON</button>
+      <button id="clearBtn" class="warn">Clear labels</button>
+    </div>
+
+    <h2>Grid snap (optional)</h2>
+    <label><input id="snap" type="checkbox" /> Snap to hex grid</label>
+    <div class="row">
+      <label>Origin X
+        <input id="gx" type="number" step="1" value="120" />
+      </label>
+      <label>Origin Y
+        <input id="gy" type="number" step="1" value="120" />
+      </label>
+    </div>
+    <div class="row">
+      <label>Hex radius R
+        <input id="gr" type="number" step="1" value="45" />
+      </label>
+      <label>Orientation
+        <select id="gori">
+          <option value="flat" selected>Flat‑topped</option>
+          <option value="pointy">Pointy‑topped</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Offset mode
+        <select id="goffset">
+          <option value="odd-q" selected>odd‑q columns</option>
+          <option value="even-q">even‑q columns</option>
+          <option value="odd-r">odd‑r rows</option>
+          <option value="even-r">even‑r rows</option>
+        </select>
+      </label>
+      <label>Show grid
+        <input id="showGrid" type="checkbox" />
+      </label>
+    </div>
+
+    <h2>Label style</h2>
+    <div class="row">
+      <label>Font size
+        <input id="fontSize" type="number" step="1" value="12" />
+      </label>
+      <label>Box padding
+        <input id="pad" type="number" step="1" value="4" />
+      </label>
+    </div>
+    <p class="muted">Tip: Edit a label by clicking it. Delete with the Delete key or the button in the editor.
+      Hold <span class="kbd">Shift</span> while clicking to duplicate a label.</p>
+  </aside>
+
+  <main>
+    <div id="stage" class="map-wrap">
+      <img id="mapImg" alt="Map" />
+      <svg id="overlay" class="svg-overlay"></svg>
+    </div>
+  </main>
+
+  <!-- Label editor modal -->
+  <dialog id="dlg">
+    <form method="dialog" class="modal" id="labelForm">
+      <h3>Label</h3>
+      <div class="row">
+        <label>Hex ID
+          <input id="f_hex" type="text" placeholder="e.g. 0805" />
+        </label>
+        <label>X, Y
+          <input id="f_xy" type="text" readonly />
+        </label>
+      </div>
+      <label>Text
+        <textarea id="f_text" rows="3" placeholder="Label text..."></textarea>
+      </label>
+      <div class="actions">
+        <button value="cancel">Cancel</button>
+        <button id="delBtn" type="button" class="warn">Delete</button>
+        <button id="okBtn" class="primary" value="ok">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    // --- Utility: localStorage persistence
+    const storageKey = (id) => `hexlabeler:${id}`;
+
+    function saveState() {
+      const id = mapId.value.trim() || 'default';
+      const data = { labels, grid: gridParams(), imgMeta: currentImageMeta() };
+      localStorage.setItem(storageKey(id), JSON.stringify(data));
+    }
+
+    function loadState() {
+      const id = mapId.value.trim() || 'default';
+      const raw = localStorage.getItem(storageKey(id));
+      if (!raw) return false;
+      try {
+        const obj = JSON.parse(raw);
+        labels = obj.labels || [];
+        setGridParams(obj.grid || {});
+        draw();
+        return true;
+      } catch { return false; }
+    }
+
+    function currentImageMeta() {
+      const img = mapImg;
+      return { naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, src: img.src };
+    }
+
+    // --- DOM refs
+    const mapId = document.getElementById('mapId');
+    const mapImg = document.getElementById('mapImg');
+    const overlay = document.getElementById('overlay');
+    const stage = document.getElementById('stage');
+
+    // Controls
+    const fileInput = document.getElementById('fileInput');
+    const urlInput = document.getElementById('urlInput');
+    const loadUrlBtn = document.getElementById('loadUrlBtn');
+    const fitBtn = document.getElementById('fitBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const importBtn = document.getElementById('importBtn');
+    const clearBtn = document.getElementById('clearBtn');
+
+    const snap = document.getElementById('snap');
+    const gx = document.getElementById('gx');
+    const gy = document.getElementById('gy');
+    const gr = document.getElementById('gr');
+    const gori = document.getElementById('gori');
+    const goffset = document.getElementById('goffset');
+    const showGrid = document.getElementById('showGrid');
+
+    const fontSize = document.getElementById('fontSize');
+    const pad = document.getElementById('pad');
+
+    // Modal
+    const dlg = document.getElementById('dlg');
+    const f_hex = document.getElementById('f_hex');
+    const f_xy = document.getElementById('f_xy');
+    const f_text = document.getElementById('f_text');
+    const delBtn = document.getElementById('delBtn');
+
+    let labels = []; // {id, x, y, text}
+    let selectedId = null;
+
+    // --- Image loading
+    function setImage(src) {
+      return new Promise((resolve, reject) => {
+        mapImg.onload = () => { sizeOverlay(); draw(); saveState(); resolve(); };
+        mapImg.onerror = (e) => reject(e);
+        mapImg.src = src;
+      });
+    }
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      setImage(url).then(() => { if (!loadState()) labels = []; draw(); });
+    });
+
+    loadUrlBtn.addEventListener('click', () => {
+      const u = urlInput.value.trim();
+      if (!u) return;
+      setImage(u).then(() => { if (!loadState()) labels = []; draw(); });
+    });
+
+    fitBtn.addEventListener('click', () => stage.scrollTo({ top: 0, left: 0, behavior: 'smooth' }));
+
+    // --- Export/Import
+    exportBtn.addEventListener('click', () => {
+      const data = { labels, grid: gridParams(), img: currentImageMeta() };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${mapId.value || 'labels'}.json`;
+      a.click();
+    });
+
+    importBtn.addEventListener('click', async () => {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'application/json';
+      inp.onchange = async () => {
+        const f = inp.files?.[0]; if (!f) return;
+        const text = await f.text();
+        try {
+          const data = JSON.parse(text);
+          labels = data.labels || [];
+          setGridParams(data.grid || {});
+          draw(); saveState();
+        } catch(err) { alert('Invalid JSON'); }
+      };
+      inp.click();
+    });
+
+    clearBtn.addEventListener('click', () => {
+      if (!confirm('Delete all labels?')) return;
+      labels = []; draw(); saveState();
+    });
+
+    // --- Grid helpers
+    function gridParams() {
+      return {
+        enabled: snap.checked,
+        x: +gx.value, y: +gy.value, r: +gr.value,
+        orientation: gori.value, offset: goffset.value, show: showGrid.checked,
+      };
+    }
+    function setGridParams(p) {
+      if (typeof p.enabled === 'boolean') snap.checked = p.enabled;
+      if (p.x != null) gx.value = p.x; if (p.y != null) gy.value = p.y;
+      if (p.r != null) gr.value = p.r;
+      if (p.orientation) gori.value = p.orientation;
+      if (p.offset) goffset.value = p.offset;
+      if (typeof p.show === 'boolean') showGrid.checked = p.show;
+    }
+
+    function axialRound(q, r) {
+      // cube rounding
+      let x = q, z = r, y = -x - z;
+      let rx = Math.round(x), ry = Math.round(y), rz = Math.round(z);
+      const x_diff = Math.abs(rx - x), y_diff = Math.abs(ry - y), z_diff = Math.abs(rz - z);
+      if (x_diff > y_diff && x_diff > z_diff) rx = -ry - rz;
+      else if (y_diff > z_diff) ry = -rx - rz;
+      else rz = -rx - ry;
+      return [rx, rz];
+    }
+
+    function worldToAxial(x, y) {
+      const r = +gr.value; const ori = gori.value; const off = goffset.value;
+      const ox = +gx.value; const oy = +gy.value;
+      if (ori === 'flat') {
+        // flat‑topped, odd/even‑q columns
+        const q = ( (x - ox) * 2/3 ) / r;
+        const rAx = ( (- (x - ox) / 3) + (Math.sqrt(3)/3)*(y - oy) ) / r;
+        let [aq, ar] = axialRound(q, rAx);
+        // offset adjustment when producing center
+        return [aq, ar];
+      } else {
+        // pointy‑topped, odd/even‑r rows
+        const q = ( (Math.sqrt(3)/3)*(x - ox) - (1/3)*(y - oy) ) / r;
+        const rAx = ( (2/3)*(y - oy) ) / r;
+        let [aq, ar] = axialRound(q, rAx);
+        return [aq, ar];
+      }
+    }
+
+    function axialToPixel(q, r) {
+      const R = +gr.value; const ori = gori.value; const ox = +gx.value; const oy = +gy.value;
+      if (ori === 'flat') {
+        const px = R * (3/2 * q) + ox;
+        const py = R * (Math.sqrt(3)/2 * q + Math.sqrt(3) * r) + oy;
+        return [px, py];
+      } else {
+        const px = R * (Math.sqrt(3) * q + Math.sqrt(3)/2 * r) + ox;
+        const py = R * (3/2 * r) + oy;
+        return [px, py];
+      }
+    }
+
+    function nearestHexCenter(x, y) {
+      const [q, r] = worldToAxial(x, y);
+      return axialToPixel(q, r);
+    }
+
+    // Draw grid visualization
+    function drawGrid() {
+      const p = gridParams();
+      if (!p.show) return '';
+      const w = mapImg.naturalWidth, h = mapImg.naturalHeight;
+      const R = p.r; const ori = p.orientation;
+      const out = [];
+      // iterate a reasonable range
+      const cols = Math.ceil(w / (R * (ori==='flat' ? 1.5 : Math.sqrt(3)) )) + 8;
+      const rows = Math.ceil(h / (R * (ori==='flat' ? Math.sqrt(3) : 1.5) )) + 8;
+      for (let qi = -cols; qi < cols; qi++) {
+        for (let ri = -rows; ri < rows; ri++) {
+          const [cx, cy] = axialToPixel(qi, ri);
+          if (cx < -R || cy < -R || cx > w+R || cy > h+R) continue;
+          out.push(`<circle cx="${cx}" cy="${cy}" r="1.5" fill="#888" opacity="0.5" />`);
+        }
+      }
+      return out.join('');
+    }
+
+    // --- Coordinate helpers (image space)
+    function clientToImageXY(evt) {
+      const rect = mapImg.getBoundingClientRect();
+      const scaleX = mapImg.naturalWidth / rect.width;
+      const scaleY = mapImg.naturalHeight / rect.height;
+      const x = (evt.clientX - rect.left) * scaleX;
+      const y = (evt.clientY - rect.top) * scaleY;
+      return [x, y];
+    }
+
+    function sizeOverlay() {
+      overlay.setAttribute('viewBox', `0 0 ${mapImg.naturalWidth} ${mapImg.naturalHeight}`);
+      overlay.setAttribute('preserveAspectRatio', 'xMinYMin meet');
+    }
+
+    // --- Label rendering
+    function draw() {
+      const fs = +fontSize.value; const padding = +pad.value;
+      const items = labels.map(l => labelNode(l, fs, padding)).join('');
+      const gridSvg = drawGrid();
+      overlay.innerHTML = `<g id="grid">${gridSvg}</g><g id="labels">${items}</g>`;
+      // reattach events for labels
+      overlay.querySelectorAll('.label').forEach(g => {
+        g.addEventListener('click', (e) => { e.stopPropagation(); openEditor(g.dataset.id); });
+      });
+      overlay.style.pointerEvents = 'auto';
+    }
+
+    function labelNode(l, fs, padding) {
+      const tid = (l.hex || '').trim();
+      const textLines = (l.text || '').split('\n');
+      const lineHeight = fs + 2;
+      const width = Math.max(40, ...textLines.map(s => s.length * (fs * 0.6))) + padding*2;
+      const height = lineHeight * textLines.length + (tid ? 12 : 0) + padding*2;
+      const x = l.x - width/2; const y = l.y - height/2;
+      const lines = textLines.map((s,i)=>`<text x="${l.x}" y="${y + padding + lineHeight/2 + i*lineHeight}" font-size="${fs}">${escapeHtml(s)}</text>`).join('');
+      const hexLine = tid ? `<text class="hexid" x="${l.x}" y="${y + height - padding - 6}" font-size="10">${escapeHtml(tid)}</text>` : '';
+      return `<g class="label" data-id="${l.id}">
+        <rect x="${x}" y="${y}" width="${width}" height="${height}" />
+        ${lines}
+        ${hexLine}
+      </g>`;
+    }
+
+    function escapeHtml(s){
+      return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+    }
+
+    // --- Interactions
+    overlay.addEventListener('click', (e) => {
+      const [ix, iy] = clientToImageXY(e);
+      const p = gridParams();
+      const [x, y] = (p.enabled ? nearestHexCenter(ix, iy) : [ix, iy]);
+      const dupFrom = e.shiftKey ? labels.find(l => l.id === selectedId) : null;
+      const newLabel = {
+        id: crypto.randomUUID(),
+        x, y,
+        hex: '',
+        text: dupFrom ? dupFrom.text : ''
+      };
+      labels.push(newLabel);
+      selectedId = newLabel.id;
+      openEditor(newLabel.id);
+      draw(); saveState();
+    });
+
+    function openEditor(id) {
+      selectedId = id;
+      const l = labels.find(x => x.id === id); if (!l) return;
+      f_hex.value = l.hex || '';
+      f_xy.value = `${l.x.toFixed(1)}, ${l.y.toFixed(1)}`;
+      f_text.value = l.text || '';
+      delBtn.onclick = () => { if (confirm('Delete this label?')) { labels = labels.filter(x => x.id !== id); dlg.close(); draw(); saveState(); } };
+      dlg.showModal();
+    }
+
+    dlg.addEventListener('close', () => {
+      if (dlg.returnValue !== 'ok') return;
+      const l = labels.find(x => x.id === selectedId); if (!l) return;
+      l.hex = f_hex.value.trim();
+      l.text = f_text.value;
+      draw(); saveState();
+    });
+
+    // Drag labels
+    let draggingId = null;
+    overlay.addEventListener('mousedown', (e) => {
+      const target = e.target.closest('.label');
+      if (!target) return;
+      draggingId = target.dataset.id; selectedId = draggingId;
+      const [startX, startY] = clientToImageXY(e);
+      const l = labels.find(x => x.id === draggingId);
+      const ox = l.x - startX, oy = l.y - startY;
+      function move(ev){
+        const [mx, my] = clientToImageXY(ev);
+        let nx = mx + ox, ny = my + oy;
+        if (snap.checked) [nx, ny] = nearestHexCenter(nx, ny);
+        l.x = nx; l.y = ny; draw();
+      }
+      function up(){ window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); saveState(); }
+      window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+    });
+
+    // Keyboard delete
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Delete' && selectedId) { labels = labels.filter(l => l.id !== selectedId); selectedId = null; draw(); saveState(); }
+    });
+
+    // Persist UI -> redraw
+    [snap, gx, gy, gr, gori, goffset, showGrid, fontSize, pad, mapId].forEach(inp => {
+      inp.addEventListener('input', () => { draw(); saveState(); });
+      inp.addEventListener('change', () => { draw(); saveState(); });
+    });
+
+    // Initial image: try to preload the provided path if available
+    (async function init(){
+      // If you have a local image path you can set it here; otherwise use the file/URL inputs.
+      // Example: setImage('/mnt/data/d8eeab50-fecb-4d99-a0ae-ef04df606304.png').catch(()=>{});
+      draw();
+      // Attempt to load any saved state for default project
+      loadState();
+    })();
+  </script>
+</body>
+</html>
