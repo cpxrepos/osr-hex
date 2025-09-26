@@ -39,6 +39,10 @@
     .advanced-controls { margin-top: 10px; display:grid; gap:10px; }
     .advanced-controls .row { gap:6px; }
     .advanced-controls label { font-size:12px; margin:0; }
+
+    .advanced-controls label.inline { display:flex; align-items:center; gap:6px; }
+    .advanced-controls label.inline input[type="checkbox"] { width:auto; }
+
     .advanced-controls input[type="number"] { width:100%; }
     .advanced-controls button { align-self:start; }
     .viewport.droppable::after {
@@ -104,15 +108,21 @@
     <details class="advanced" id="advancedTools">
       <summary>Advanced tools</summary>
       <div class="advanced-controls">
+
+        <label class="inline">
+          <input id="showGridToggle" type="checkbox" checked />
+          Show grid overlay
+        </label>
         <label>Grid scale (%)
-          <input id="gridScale" type="number" min="10" max="400" step="1" value="100" />
+          <input id="gridScale" type="number" min="10" max="400" step="1" value="90" />
         </label>
         <div class="row">
           <label>Offset X (px)
-            <input id="gridOffsetX" type="number" step="1" value="0" />
+            <input id="gridOffsetX" type="number" step="1" value="214" />
           </label>
           <label>Offset Y (px)
-            <input id="gridOffsetY" type="number" step="1" value="0" />
+            <input id="gridOffsetY" type="number" step="1" value="120" />
+
           </label>
         </div>
         <button type="button" id="resetGridAdjust">Reset grid adjustments</button>
@@ -344,7 +354,7 @@
 
     const FIXED_FONT_SIZE = 36;
     const FIXED_PADDING = 0;
-    const SHOW_GRID = true;
+    let showGrid = true;
 
     // Modal
     const dlg = document.getElementById('dlg');
@@ -357,7 +367,11 @@
     let selectedId = null;
     let gridBase = null;
     let gridInfo = null;
-    let gridAdjust = { scale: 100, offsetX: 0, offsetY: 0 };
+
+    const DEFAULT_GRID_ADJUST = { scale: 90, offsetX: 214, offsetY: 120 };
+    let gridAdjust = { ...DEFAULT_GRID_ADJUST };
+
+    const showGridToggle = document.getElementById('showGridToggle');
 
     const gridScaleInput = document.getElementById('gridScale');
     const gridOffsetXInput = document.getElementById('gridOffsetX');
@@ -404,7 +418,9 @@
     // --- Grid helpers
     function currentOptions() {
       return {
-        showGrid: SHOW_GRID,
+
+        showGrid,
+
         fontSize: FIXED_FONT_SIZE,
         padding: FIXED_PADDING,
         gridAdjust: { ...gridAdjust }
@@ -412,10 +428,14 @@
     }
 
     function applyOptions(opts) {
+
+      showGrid = opts.showGrid !== false;
+      if (showGridToggle) showGridToggle.checked = showGrid;
       const adj = opts.gridAdjust || {};
-      gridAdjust.scale = Number.isFinite(adj.scale) ? clamp(adj.scale, 10, 400) : 100;
-      gridAdjust.offsetX = Number.isFinite(adj.offsetX) ? adj.offsetX : 0;
-      gridAdjust.offsetY = Number.isFinite(adj.offsetY) ? adj.offsetY : 0;
+      gridAdjust.scale = Number.isFinite(adj.scale) ? clamp(adj.scale, 10, 400) : DEFAULT_GRID_ADJUST.scale;
+      gridAdjust.offsetX = Number.isFinite(adj.offsetX) ? adj.offsetX : DEFAULT_GRID_ADJUST.offsetX;
+      gridAdjust.offsetY = Number.isFinite(adj.offsetY) ? adj.offsetY : DEFAULT_GRID_ADJUST.offsetY;
+
       if (gridScaleInput) gridScaleInput.value = gridAdjust.scale;
       if (gridOffsetXInput) gridOffsetXInput.value = gridAdjust.offsetX;
       if (gridOffsetYInput) gridOffsetYInput.value = gridAdjust.offsetY;
@@ -425,7 +445,9 @@
 
     function applyGridAdjustments() {
       if (!gridBase) { gridInfo = null; return; }
-      const scale = (gridAdjust.scale || 100) / 100;
+
+      const scale = (gridAdjust.scale || DEFAULT_GRID_ADJUST.scale) / 100;
+
       const radius = gridBase.radius * scale;
       const hexHeight = Math.sqrt(3) * radius;
       const firstX = gridBase.firstX + gridAdjust.offsetX;
@@ -445,7 +467,7 @@
 
     // Draw grid visualization
     function drawGrid() {
-      if (!SHOW_GRID || !gridInfo) return '';
+      if (!showGrid || !gridInfo) return '';
       const pieces = [];
       const { cells, radius } = gridInfo;
       for (const cell of cells) {
@@ -686,7 +708,9 @@
     function hexPath(cx, cy, r) {
       const pts = [];
       for (let i = 0; i < 6; i++) {
-        const angle = (Math.PI / 180) * (60 * i - 30);
+
+        const angle = (Math.PI / 180) * (60 * i);
+
         const px = cx + r * Math.cos(angle);
         const py = cy + r * Math.sin(angle);
         pts.push(`${px},${py}`);
@@ -766,7 +790,9 @@
     function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
 
     function resetGridAdjustments() {
-      gridAdjust = { scale: 100, offsetX: 0, offsetY: 0 };
+
+      gridAdjust = { ...DEFAULT_GRID_ADJUST };
+
       if (gridScaleInput) gridScaleInput.value = gridAdjust.scale;
       if (gridOffsetXInput) gridOffsetXInput.value = gridAdjust.offsetX;
       if (gridOffsetYInput) gridOffsetYInput.value = gridAdjust.offsetY;
@@ -775,10 +801,20 @@
       saveState();
     }
 
+
+    if (showGridToggle) {
+      showGridToggle.addEventListener('change', () => {
+        showGrid = showGridToggle.checked;
+        draw();
+        saveState();
+      });
+    }
+
     if (gridScaleInput && gridOffsetXInput && gridOffsetYInput && resetGridBtn) {
       gridScaleInput.addEventListener('change', () => {
         const value = parseFloat(gridScaleInput.value);
-        gridAdjust.scale = Number.isFinite(value) ? clamp(value, 10, 400) : 100;
+        gridAdjust.scale = Number.isFinite(value) ? clamp(value, 10, 400) : DEFAULT_GRID_ADJUST.scale;
+
         gridScaleInput.value = gridAdjust.scale;
         applyGridAdjustments();
         draw();
@@ -787,8 +823,10 @@
       const handleOffsetChange = () => {
         const offX = parseFloat(gridOffsetXInput.value);
         const offY = parseFloat(gridOffsetYInput.value);
-        gridAdjust.offsetX = Number.isFinite(offX) ? offX : 0;
-        gridAdjust.offsetY = Number.isFinite(offY) ? offY : 0;
+
+        gridAdjust.offsetX = Number.isFinite(offX) ? offX : DEFAULT_GRID_ADJUST.offsetX;
+        gridAdjust.offsetY = Number.isFinite(offY) ? offY : DEFAULT_GRID_ADJUST.offsetY;
+
         applyGridAdjustments();
         draw();
         saveState();
