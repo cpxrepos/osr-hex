@@ -1,9 +1,8 @@
 """Firebase Realtime Database helpers for the hex labeler server.
 
-This implementation uses the public REST API so that the database can be
-accessed without requiring service account credentials. The Firebase
-project must allow unauthenticated read/write access via its security
-rules for this to work (for example, by setting rules to `true`).
+This implementation uses the public REST API together with a database
+secret so that the backend can authenticate without requiring service
+account credentials.
 """
 
 from __future__ import annotations
@@ -13,10 +12,11 @@ import os
 import threading
 from typing import Any, Dict, Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urljoin
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 _DB_URL: Optional[str] = None
+_DB_SECRET: Optional[str] = None
 _INIT_LOCK = threading.Lock()
 
 
@@ -29,26 +29,41 @@ def _normalise_base_url(url: str) -> str:
 def initialize() -> str:
     """Return the base database URL for REST requests."""
 
-    global _DB_URL
+    global _DB_URL, _DB_SECRET
     if _DB_URL is not None:
         return _DB_URL
     with _INIT_LOCK:
         if _DB_URL is not None:
             return _DB_URL
-        db_url = os.environ.get("FIREBASE_DATABASE_URL")
-        if not db_url:
-            raise RuntimeError(
-                "The FIREBASE_DATABASE_URL environment variable must be set to use the "
-                "Firebase Realtime Database backend."
-            )
+        db_url = os.environ.get(
+            "FIREBASE_DATABASE_URL",
+            "https://osr-hex-default-rtdb.europe-west1.firebasedatabase.app/",
+        )
+        secret = os.environ.get(
+            "FIREBASE_DATABASE_SECRET",
+            "jbk2dB7RupFXJitRNlfKST2a2KetiNrwHaIfD77O",
+        )
         _DB_URL = _normalise_base_url(db_url)
+        _DB_SECRET = secret or None
         return _DB_URL
 
 
 def _build_url(map_id: str) -> str:
     base = initialize()
     encoded_id = quote(map_id, safe="")
-    return urljoin(base, f"maps/{encoded_id}.json")
+    url = urljoin(base, f"maps/{encoded_id}.json")
+    return _add_auth_param(url)
+
+
+def _add_auth_param(url: str) -> str:
+    secret = _DB_SECRET
+    if not secret:
+        return url
+    parts = list(urlsplit(url))
+    query_params = dict(parse_qsl(parts[3], keep_blank_values=True))
+    query_params["auth"] = secret
+    parts[3] = urlencode(query_params)
+    return urlunsplit(parts)
 
 
 def _request(method: str, url: str, payload: Optional[Dict[str, Any]] = None) -> Any:
