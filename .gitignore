@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+node_modules/
+data/labels.db
+data/server.log

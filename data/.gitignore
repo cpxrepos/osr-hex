@@ -1,0 +1,3 @@
+# Keep the data directory but ignore generated database/log files.
+*
+!.gitignore
