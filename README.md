@@ -1,7 +1,7 @@
 # Hex Labeler with Sync Backend
 
 This project provides the single-page hex map labeler along with a lightweight
-Python backend that persists map labels to a Google Firestore database. Running
+Python backend that persists map labels to a Firebase Realtime Database. Running
 the server allows multiple clients to share the same map ID and automatically
 keep their labels synchronized across devices.
 
@@ -20,13 +20,18 @@ http://localhost:8000/hex_labeler_webapp_single_file_html_js.html
 
 ### Firebase configuration
 
-The server expects credentials for a Google Cloud project with Firestore
-enabled. Provide the path to a service account JSON key file via the
+The server expects credentials for a Google Cloud project with the Realtime
+Database enabled. Provide the path to a service account JSON key file via the
 `FIREBASE_CREDENTIALS` environment variable. If the variable is not provided the
 server will fall back to Application Default Credentials (ADC).
 
+You must also provide the Realtime Database URL via the
+`FIREBASE_DATABASE_URL` environment variable. This is typically of the form
+`https://<project-id>-default-rtdb.firebaseio.com`.
+
 ```bash
 export FIREBASE_CREDENTIALS="/path/to/service-account.json"
+export FIREBASE_DATABASE_URL="https://<project-id>-default-rtdb.firebaseio.com"
 python server.py
 ```
 

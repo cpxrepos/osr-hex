@@ -1,4 +1,4 @@
-"""Firebase persistence helpers for the hex labeler server."""
+"""Firebase Realtime Database helpers for the hex labeler server."""
 
 from __future__ import annotations
 
@@ -7,56 +7,59 @@ import threading
 from typing import Any, Dict, Optional
 
 try:
-    from firebase_admin import credentials, firestore, get_app, initialize_app
-    from google.api_core.exceptions import GoogleAPIError
+    from firebase_admin import credentials, db, exceptions, get_app, initialize_app
 except ModuleNotFoundError as exc:  # pragma: no cover - import guard
     raise RuntimeError(
         "The 'firebase_admin' package is required to use the Firebase backend."
     ) from exc
 
-_CLIENT = None
+_DB_ROOT = None
 _INIT_LOCK = threading.Lock()
 
 
-def initialize() -> firestore.Client:
-    """Initialise and return a Firestore client."""
-    global _CLIENT
-    if _CLIENT is not None:
-        return _CLIENT
+def initialize():
+    """Initialise and return the root database reference."""
+    global _DB_ROOT
+    if _DB_ROOT is not None:
+        return _DB_ROOT
     with _INIT_LOCK:
-        if _CLIENT is not None:
-            return _CLIENT
+        if _DB_ROOT is not None:
+            return _DB_ROOT
+        db_url = os.environ.get("FIREBASE_DATABASE_URL")
+        if not db_url:
+            raise RuntimeError(
+                "The FIREBASE_DATABASE_URL environment variable must be set to use the "
+                "Firebase Realtime Database backend."
+            )
         cred_path = os.environ.get("FIREBASE_CREDENTIALS")
-        if cred_path:
-            cred = credentials.Certificate(cred_path)
-            app = initialize_app(cred)
-        else:
-            try:
-                app = get_app()
-            except ValueError:
-                cred = credentials.ApplicationDefault()
-                app = initialize_app(cred)
-        _CLIENT = firestore.client(app)
-        return _CLIENT
+        cred = credentials.Certificate(cred_path) if cred_path else None
+        options = {"databaseURL": db_url}
+        try:
+            app = initialize_app(cred, options)
+        except ValueError:
+            app = get_app()
+            if not app.options.get("databaseURL"):
+                app = initialize_app(cred, options, name="hex-labeler")
+        _DB_ROOT = db.reference("/", app=app)
+        return _DB_ROOT
 
 
 def get_map_record(map_id: str) -> Optional[Dict[str, Any]]:
-    """Fetch a map record from Firestore."""
-    client = initialize()
+    """Fetch a map record from the Realtime Database."""
+    root = initialize()
     try:
-        doc = client.collection("maps").document(map_id).get()
-    except GoogleAPIError as exc:  # pragma: no cover - defensive logging
-        raise RuntimeError("Failed to fetch map from Firestore") from exc
-    if not doc.exists:
+        data = root.child("maps").child(map_id).get()
+    except exceptions.FirebaseError as exc:  # pragma: no cover - defensive logging
+        raise RuntimeError("Failed to fetch map from Firebase Realtime Database") from exc
+    if not data:
         return None
-    data = doc.to_dict() or {}
     data.setdefault("mapId", map_id)
     return data
 
 
 def upsert_map_record(map_id: str, record: Dict[str, Any]) -> None:
-    """Create or update a map record in Firestore."""
-    client = initialize()
+    """Create or update a map record in the Realtime Database."""
+    root = initialize()
     payload = {
         "mapId": record.get("mapId", map_id),
         "labels": record.get("labels", []),
@@ -65,6 +68,8 @@ def upsert_map_record(map_id: str, record: Dict[str, Any]) -> None:
         "updatedAt": record.get("updatedAt"),
     }
     try:
-        client.collection("maps").document(map_id).set(payload)
-    except GoogleAPIError as exc:  # pragma: no cover - defensive logging
-        raise RuntimeError("Failed to update map in Firestore") from exc
+        root.child("maps").child(map_id).set(payload)
+    except exceptions.FirebaseError as exc:  # pragma: no cover - defensive logging
+        raise RuntimeError(
+            "Failed to update map in Firebase Realtime Database"
+        ) from exc
