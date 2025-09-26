@@ -619,7 +619,7 @@
     function hexPath(cx, cy, r) {
       const pts = [];
       for (let i = 0; i < 6; i++) {
-        const angle = (Math.PI / 180) * (60 * i + 30);
+        const angle = (Math.PI / 180) * (60 * i - 30);
         const px = cx + r * Math.cos(angle);
         const py = cy + r * Math.sin(angle);
         pts.push(`${px},${py}`);
