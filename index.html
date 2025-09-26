@@ -529,7 +529,7 @@
       const textMarkup = textLines.map((line, idx) => `
         <text class="icon-label" x="50" y="${110 + idx * 18}" font-size="18">${escapeHtml(line)}</text>
       `).join('');
-      const yOffset = hasContent ? 64 : 54;
+      const yOffset = hasContent ? 104 : 54;
       return `<g class="map-item icon" data-id="${l.id}" data-icon="${icon.id}" transform="translate(${l.x},${l.y}) scale(${scale}) translate(-50,-${yOffset})">${icon.svg}${textMarkup}</g>`;
     }
 
