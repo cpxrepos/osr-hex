@@ -34,6 +34,13 @@
     .palette { margin-top: 10px; display:flex; gap:10px; align-items:center; }
     .draggable-chip { padding:8px 12px; border:1px dashed #666; border-radius:16px; background:#fff; font-size:12px; cursor:grab; user-select:none; }
     .draggable-chip:active { cursor:grabbing; }
+    details.advanced { margin-top: 16px; border:1px solid #d6d9dd; border-radius:10px; padding:10px 12px; background:#f9fafc; }
+    details.advanced summary { cursor:pointer; font-weight:600; font-size:13px; color:var(--accent); }
+    .advanced-controls { margin-top: 10px; display:grid; gap:10px; }
+    .advanced-controls .row { gap:6px; }
+    .advanced-controls label { font-size:12px; margin:0; }
+    .advanced-controls input[type="number"] { width:100%; }
+    .advanced-controls button { align-self:start; }
     .viewport.droppable::after {
       content:'Drop label onto map';
       position:absolute;
@@ -93,6 +100,25 @@
     </div>
     <p class="muted">Tip: Edit a label by clicking it. Delete with the Delete key or the button in the editor.
       Hold <span class="kbd">Shift</span> while clicking to duplicate a label.</p>
+
+    <details class="advanced" id="advancedTools">
+      <summary>Advanced tools</summary>
+      <div class="advanced-controls">
+        <label>Grid scale (%)
+          <input id="gridScale" type="number" min="10" max="400" step="1" value="100" />
+        </label>
+        <div class="row">
+          <label>Offset X (px)
+            <input id="gridOffsetX" type="number" step="1" value="0" />
+          </label>
+          <label>Offset Y (px)
+            <input id="gridOffsetY" type="number" step="1" value="0" />
+          </label>
+        </div>
+        <button type="button" id="resetGridAdjust">Reset grid adjustments</button>
+        <p class="muted">Use these controls to align the overlay grid with the underlying map art. Scale adjusts hex size; offsets move the grid.</p>
+      </div>
+    </details>
   </aside>
 
   <main>
@@ -329,7 +355,14 @@
 
     let labels = []; // {id, x, y, text, hex}
     let selectedId = null;
+    let gridBase = null;
     let gridInfo = null;
+    let gridAdjust = { scale: 100, offsetX: 0, offsetY: 0 };
+
+    const gridScaleInput = document.getElementById('gridScale');
+    const gridOffsetXInput = document.getElementById('gridOffsetX');
+    const gridOffsetYInput = document.getElementById('gridOffsetY');
+    const resetGridBtn = document.getElementById('resetGridAdjust');
 
     const viewState = { scale: 1, x: 0, y: 0 };
 
@@ -370,11 +403,44 @@
 
     // --- Grid helpers
     function currentOptions() {
-      return { showGrid: SHOW_GRID, fontSize: FIXED_FONT_SIZE, padding: FIXED_PADDING };
+      return {
+        showGrid: SHOW_GRID,
+        fontSize: FIXED_FONT_SIZE,
+        padding: FIXED_PADDING,
+        gridAdjust: { ...gridAdjust }
+      };
     }
 
     function applyOptions(opts) {
-      // Options are fixed; method retained for compatibility with saved data.
+      const adj = opts.gridAdjust || {};
+      gridAdjust.scale = Number.isFinite(adj.scale) ? clamp(adj.scale, 10, 400) : 100;
+      gridAdjust.offsetX = Number.isFinite(adj.offsetX) ? adj.offsetX : 0;
+      gridAdjust.offsetY = Number.isFinite(adj.offsetY) ? adj.offsetY : 0;
+      if (gridScaleInput) gridScaleInput.value = gridAdjust.scale;
+      if (gridOffsetXInput) gridOffsetXInput.value = gridAdjust.offsetX;
+      if (gridOffsetYInput) gridOffsetYInput.value = gridAdjust.offsetY;
+      applyGridAdjustments();
+      draw();
+    }
+
+    function applyGridAdjustments() {
+      if (!gridBase) { gridInfo = null; return; }
+      const scale = (gridAdjust.scale || 100) / 100;
+      const radius = gridBase.radius * scale;
+      const hexHeight = Math.sqrt(3) * radius;
+      const firstX = gridBase.firstX + gridAdjust.offsetX;
+      const firstY = gridBase.firstY + gridAdjust.offsetY;
+      const cells = [];
+      for (let col = 0; col < gridBase.cols; col++) {
+        const baseX = firstX + col * (1.5 * radius);
+        const offsetY = (col % 2 === 0) ? 0 : hexHeight / 2;
+        for (let row = 0; row < gridBase.rows; row++) {
+          const cy = firstY + row * hexHeight + offsetY;
+          const id = `${String(col + 1).padStart(2, '0')}${String(row + 1).padStart(2, '0')}`;
+          cells.push({ id, col, row, x: baseX, y: cy });
+        }
+      }
+      gridInfo = { ...gridBase, radius, hexHeight, cells };
     }
 
     // Draw grid visualization
@@ -553,7 +619,7 @@
 
     async function analyzeImage() {
       const w = mapImg.naturalWidth, h = mapImg.naturalHeight;
-      if (!w || !h) { gridInfo = null; return; }
+      if (!w || !h) { gridBase = null; gridInfo = null; return; }
       const canvas = document.createElement('canvas');
       const maxDim = 1000;
       const scale = Math.min(1, maxDim / Math.max(w, h));
@@ -567,6 +633,7 @@
         data = ctx.getImageData(0, 0, sw, sh).data;
       } catch(err) {
         console.warn('Unable to analyze grid from image', err);
+        gridBase = null;
         gridInfo = null;
         return;
       }
@@ -584,6 +651,7 @@
         }
       }
       if (minX > maxX || minY > maxY) {
+        gridBase = null;
         gridInfo = null;
         return;
       }
@@ -603,23 +671,22 @@
       const hexHeight = Math.sqrt(3) * radius;
       const firstX = bounds.left + radius;
       const firstY = bounds.top + hexHeight / 2;
-      const cells = [];
-      for (let col = 0; col < preset.cols; col++) {
-        const baseX = firstX + col * (1.5 * radius);
-        const offsetY = (col % 2 === 0) ? 0 : hexHeight / 2;
-        for (let row = 0; row < preset.rows; row++) {
-          const cy = firstY + row * hexHeight + offsetY;
-          const id = `${String(col + 1).padStart(2, '0')}${String(row + 1).padStart(2, '0')}`;
-          cells.push({ id, col, row, x: baseX, y: cy });
-        }
-      }
-      gridInfo = { bounds, radius, hexHeight, cols: preset.cols, rows: preset.rows, cells };
+      gridBase = {
+        bounds,
+        radius,
+        hexHeight,
+        cols: preset.cols,
+        rows: preset.rows,
+        firstX,
+        firstY
+      };
+      applyGridAdjustments();
     }
 
     function hexPath(cx, cy, r) {
       const pts = [];
       for (let i = 0; i < 6; i++) {
-        const angle = (Math.PI / 180) * (60 * i + 30);
+        const angle = (Math.PI / 180) * (60 * i - 30);
         const px = cx + r * Math.cos(angle);
         const py = cy + r * Math.sin(angle);
         pts.push(`${px},${py}`);
@@ -697,6 +764,39 @@
     }
 
     function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+
+    function resetGridAdjustments() {
+      gridAdjust = { scale: 100, offsetX: 0, offsetY: 0 };
+      if (gridScaleInput) gridScaleInput.value = gridAdjust.scale;
+      if (gridOffsetXInput) gridOffsetXInput.value = gridAdjust.offsetX;
+      if (gridOffsetYInput) gridOffsetYInput.value = gridAdjust.offsetY;
+      applyGridAdjustments();
+      draw();
+      saveState();
+    }
+
+    if (gridScaleInput && gridOffsetXInput && gridOffsetYInput && resetGridBtn) {
+      gridScaleInput.addEventListener('change', () => {
+        const value = parseFloat(gridScaleInput.value);
+        gridAdjust.scale = Number.isFinite(value) ? clamp(value, 10, 400) : 100;
+        gridScaleInput.value = gridAdjust.scale;
+        applyGridAdjustments();
+        draw();
+        saveState();
+      });
+      const handleOffsetChange = () => {
+        const offX = parseFloat(gridOffsetXInput.value);
+        const offY = parseFloat(gridOffsetYInput.value);
+        gridAdjust.offsetX = Number.isFinite(offX) ? offX : 0;
+        gridAdjust.offsetY = Number.isFinite(offY) ? offY : 0;
+        applyGridAdjustments();
+        draw();
+        saveState();
+      };
+      gridOffsetXInput.addEventListener('change', handleOffsetChange);
+      gridOffsetYInput.addEventListener('change', handleOffsetChange);
+      resetGridBtn.addEventListener('click', resetGridAdjustments);
+    }
 
     function fitToWindow(animated = false) {
       const vw = viewport.clientWidth;
