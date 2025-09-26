@@ -128,6 +128,8 @@
   </dialog>
 
   <script>
+    // Optional: override the default Firebase database settings before this script runs by defining
+    // `window.HEX_LABELER_FIREBASE_CONFIG = { databaseURL: "https://<your-project>.firebasedatabase.app", authToken?: "<optional-token>" }`.
     // --- Utility: localStorage persistence
     const storageKey = (id) => `hexlabeler:${id}`;
     const remoteSync = createRemoteSync();
@@ -200,6 +202,38 @@
     }
 
     function createRemoteSync() {
+      const firebaseConfig = (() => {
+        const override = window.HEX_LABELER_FIREBASE_CONFIG;
+        if (override && typeof override === 'object' && override.databaseURL) {
+          return {
+            baseUrl: String(override.databaseURL).replace(/\/$/, ''),
+            authToken: override.authToken ? String(override.authToken) : null
+          };
+        }
+        return {
+          baseUrl: 'https://osr-hex-default-rtdb.europe-west1.firebasedatabase.app',
+          authToken: null
+        };
+      })();
+
+      if (!firebaseConfig || !firebaseConfig.baseUrl) {
+        console.warn('Remote sync disabled: no Firebase Realtime Database URL configured.');
+        return {
+          queueSave() {},
+          async load() { return null; }
+        };
+      }
+
+      function buildUrl(id) {
+        const encoded = encodeURIComponent(id);
+        let url = `${firebaseConfig.baseUrl}/maps/${encoded}.json`;
+        if (firebaseConfig.authToken) {
+          const separator = url.includes('?') ? '&' : '?';
+          url = `${url}${separator}auth=${encodeURIComponent(firebaseConfig.authToken)}`;
+        }
+        return url;
+      }
+
       let pending = null;
       let timer = null;
 
@@ -209,13 +243,22 @@
         pending = null;
         timer = null;
         try {
-          await fetch(`/api/maps/${encodeURIComponent(id)}`, {
+          const url = buildUrl(id);
+          const body = JSON.stringify({
+            ...payload,
+            mapId: id,
+            updatedAt: new Date().toISOString()
+          });
+          const res = await fetch(url, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body
           });
+          if (!res.ok) {
+            throw new Error(`Firebase responded with ${res.status}`);
+          }
         } catch (err) {
-          console.warn('Failed to sync map to server', err);
+          console.warn('Failed to sync map to Firebase', err);
         }
       }
 
@@ -227,12 +270,19 @@
         },
         async load(id) {
           try {
-            const res = await fetch(`/api/maps/${encodeURIComponent(id)}`);
-            if (res.status === 404) return null;
-            if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-            return await res.json();
+            const url = buildUrl(id);
+            const res = await fetch(url, { cache: 'no-store' });
+            if (!res.ok) {
+              if (res.status === 401 || res.status === 403) {
+                console.warn('Firebase denied access to map data. Check your database rules or auth token.');
+              }
+              throw new Error(`Firebase responded with ${res.status}`);
+            }
+            const data = await res.json();
+            if (!data) return null;
+            return data;
           } catch (err) {
-            console.warn('Failed to load map from server', err);
+            console.warn('Failed to load map from Firebase', err);
             return null;
           }
         }
