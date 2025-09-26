@@ -77,6 +77,7 @@
     .icon polygon,
     .icon polyline { fill:#1a1a1a; stroke:#f6f6f6; stroke-width:4; stroke-linecap:round; stroke-linejoin:round; }
     .icon { filter: drop-shadow(0 1px 0 rgba(255,255,255,0.35)) drop-shadow(0 3px 6px rgba(0,0,0,0.35)); }
+    .icon text { font-family: ui-sans-serif, system-ui, -apple-system; text-anchor: middle; dominant-baseline: hanging; fill:#fff; stroke:#111; stroke-width:3; paint-order: stroke fill; }
 
     .grid-cell { fill: none; stroke: rgba(0,0,0,0.25); stroke-width:1; pointer-events:none; }
     .grid-label { font-family: ui-sans-serif, system-ui, -apple-system; font-size:11px; fill:rgba(0,0,0,0.4); pointer-events:none; }
@@ -522,7 +523,13 @@
       const baseSize = gridInfo ? gridInfo.radius * 1.7 : 80;
       const size = Math.max(40, Math.min(baseSize, 120));
       const scale = size / 100;
-      return `<g class="map-item icon" data-id="${l.id}" data-icon="${icon.id}" transform="translate(${l.x},${l.y}) scale(${scale}) translate(-50,-50)">${icon.svg}</g>`;
+      const rawLines = (l.text || '').split('\n');
+      const hasContent = rawLines.some(line => line.trim().length > 0);
+      const textLines = hasContent ? rawLines : [];
+      const textMarkup = textLines.map((line, idx) => `
+        <text class="icon-label" x="50" y="${110 + idx * 18}" font-size="18">${escapeHtml(line)}</text>
+      `).join('');
+      return `<g class="map-item icon" data-id="${l.id}" data-icon="${icon.id}" transform="translate(${l.x},${l.y}) scale(${scale}) translate(-50,-50)">${icon.svg}${textMarkup}</g>`;
     }
 
     function updateEditorMode(mode) {
@@ -534,7 +541,7 @@
         iconFieldWrap.style.display = kind === 'icon' ? '' : 'none';
       }
       if (textFieldWrap) {
-        textFieldWrap.style.display = kind === 'icon' ? 'none' : '';
+        textFieldWrap.style.display = '';
       }
       if (f_icon) {
         if (kind === 'icon' && !ICON_LOOKUP[f_icon.value]) {
@@ -543,7 +550,8 @@
         f_icon.disabled = kind !== 'icon';
       }
       if (f_text) {
-        f_text.disabled = kind === 'icon';
+        f_text.disabled = false;
+        f_text.placeholder = kind === 'icon' ? 'Optional text shown beneath the icon...' : 'Label text...';
       }
       dlg.dataset.kind = kind;
     }
@@ -722,7 +730,7 @@
         x,
         y,
         hex: snap ? snap.id : '',
-        text: resolvedKind === 'icon' ? '' : (base ? base.text : '')
+        text: base ? base.text : ''
       };
       labels.push(newLabel);
       selectedId = newLabel.id;
@@ -768,10 +776,8 @@
         let iconVal = f_icon ? f_icon.value : ICONS[0].id;
         if (!ICON_LOOKUP[iconVal]) iconVal = ICONS[0].id;
         l.iconId = iconVal;
-        l.text = '';
-      } else {
-        l.text = f_text ? f_text.value : '';
       }
+      l.text = f_text ? f_text.value : '';
       draw(); saveState();
     });
 
