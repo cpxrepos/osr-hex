@@ -34,6 +34,12 @@
     .palette { margin-top: 10px; display:flex; gap:10px; align-items:center; }
     .draggable-chip { padding:8px 12px; border:1px dashed #666; border-radius:16px; background:#fff; font-size:12px; cursor:grab; user-select:none; }
     .draggable-chip:active { cursor:grabbing; }
+    .icon-palette { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+    .icon-chip { width:64px; height:64px; border:1px dashed #666; border-radius:12px; display:flex; align-items:center; justify-content:center; background:#fff; cursor:grab; }
+    .icon-chip svg { width:42px; height:42px; }
+    .icon-chip:active { cursor:grabbing; }
+
+    .map-item { pointer-events: all; cursor: pointer; }
     details.advanced { margin-top: 16px; border:1px solid #d6d9dd; border-radius:10px; padding:10px 12px; background:#f9fafc; }
     details.advanced summary { cursor:pointer; font-weight:600; font-size:13px; color:var(--accent); }
     .advanced-controls { margin-top: 10px; display:grid; gap:10px; }
@@ -61,10 +67,16 @@
     }
 
     /* Label visuals */
-    .label { pointer-events: all; cursor: pointer; }
     .label rect { fill: rgba(255,255,255,0.8); stroke:#111; stroke-width:0.75; rx:4; ry:4; }
     .label text { font-family: ui-sans-serif, system-ui, -apple-system; line-height:1.1; fill:#111; dominant-baseline: middle; text-anchor: middle; }
     .label .hexid { font-size: 10px; fill:#444; }
+
+    .icon path,
+    .icon rect,
+    .icon circle,
+    .icon polygon,
+    .icon polyline { fill:#1a1a1a; stroke:#f6f6f6; stroke-width:4; stroke-linecap:round; stroke-linejoin:round; }
+    .icon { filter: drop-shadow(0 1px 0 rgba(255,255,255,0.35)) drop-shadow(0 3px 6px rgba(0,0,0,0.35)); }
 
     .grid-cell { fill: none; stroke: rgba(0,0,0,0.25); stroke-width:1; pointer-events:none; }
     .grid-label { font-family: ui-sans-serif, system-ui, -apple-system; font-size:11px; fill:rgba(0,0,0,0.4); pointer-events:none; }
@@ -95,9 +107,12 @@
     <div class="palette">
       <div id="newLabelChip" class="draggable-chip" draggable="true">Drag to add label</div>
     </div>
+    <h2>Icons</h2>
+    <div id="iconPalette" class="icon-palette" aria-label="Icon palette"></div>
     <p class="muted">Tip: Drag the "Drag to add label" chip onto a hex — it will snap to the detected grid.
-      Edit the details and repeat. Scroll to zoom and drag the map background
-      to pan.Edit a label by clicking it. Delete with the Delete key or the button in the editor.
+      Edit the details and repeat. You can also drag one of the icons onto the map for quick castle, town,
+      cave, or road markers. Scroll to zoom and drag the map background
+      to pan. Edit a label or icon by clicking it. Delete with the Delete key or the button in the editor.
       </p>
 
     <details class="advanced" id="advancedTools">
@@ -147,7 +162,16 @@
           <input id="f_xy" type="text" readonly />
         </label>
       </div>
-      <label>Text
+      <label>Type
+        <select id="f_kind">
+          <option value="text">Text label</option>
+          <option value="icon">Icon</option>
+        </select>
+      </label>
+      <label id="iconFieldWrap">Icon
+        <select id="f_icon"></select>
+      </label>
+      <label id="textFieldWrap">Text
         <textarea id="f_text" rows="3" placeholder="Label text..."></textarea>
       </label>
       <div class="actions">
@@ -195,7 +219,7 @@
     }
 
     async function applyLoadedState(state, id) {
-      labels = Array.isArray(state.labels) ? state.labels : [];
+      labels = Array.isArray(state.labels) ? state.labels.map(normalizeLabel).filter(Boolean) : [];
       applyOptions(state.options || {});
       const desiredImage = sanitizeImageSrc(state.imgMeta?.src);
       if (desiredImage && desiredImage !== mapImg.src) {
@@ -342,6 +366,7 @@
     const overlay = document.getElementById('overlay');
     const viewport = document.getElementById('viewport');
     const canvasWrap = document.getElementById('canvasWrap');
+    const iconPalette = document.getElementById('iconPalette');
 
     // Controls
     const exportBtn = document.getElementById('exportBtn');
@@ -351,14 +376,81 @@
     const FIXED_PADDING = 0;
     let showGrid = true;
 
+    const ICONS = [
+      {
+        id: 'castle',
+        label: 'Castle',
+        svg: `
+          <path d="M18 82V40h10V26h8v14h12V26h8v14h10v42H18z" />
+          <path d="M34 82V58h32v24" />
+          <rect x="44" y="58" width="12" height="24" rx="3" />
+          <path d="M34 40h32" />
+        `
+      },
+      {
+        id: 'town',
+        label: 'Town',
+        svg: `
+          <path d="M20 82V56l20-15 20 15v26H20z" />
+          <rect x="36" y="66" width="10" height="16" rx="2" />
+          <path d="M60 82V62l14-10 14 10v20H60z" />
+          <rect x="72" y="68" width="8" height="14" rx="2" />
+        `
+      },
+      {
+        id: 'city',
+        label: 'City',
+        svg: `
+          <path d="M16 82V48l10-6 10 6v34H16z" />
+          <path d="M36 82V38l12-8 12 8v44H36z" />
+          <path d="M60 82V54l10-6 10 6v28H60z" />
+          <path d="M80 82V62l6-4 6 4v20H80z" />
+          <rect x="44" y="60" width="8" height="22" rx="2" />
+          <rect x="66" y="64" width="6" height="18" rx="2" />
+        `
+      },
+      {
+        id: 'cave',
+        label: 'Cave',
+        svg: `
+          <path d="M18 82c0-28 14-46 32-46s32 18 32 46H18z" />
+          <path d="M40 82c0-14 6-26 10-26s10 12 10 26" />
+          <path d="M26 58l8-12 8 8" />
+        `
+      },
+      {
+        id: 'road',
+        label: 'Road',
+        svg: `
+          <path d="M32 18c26 22 22 34 8 46s-10 26 10 44" />
+          <path d="M50 18c26 20 22 32 10 44s-6 26 16 44" />
+        `
+      },
+      {
+        id: 'camp',
+        label: 'Camp',
+        svg: `
+          <path d="M18 82l32-54 32 54H18z" />
+          <path d="M50 34v48" />
+          <path d="M34 62h20" />
+        `
+      }
+    ];
+
+    const ICON_LOOKUP = Object.fromEntries(ICONS.map(icon => [icon.id, icon]));
+
     // Modal
     const dlg = document.getElementById('dlg');
     const f_hex = document.getElementById('f_hex');
     const f_xy = document.getElementById('f_xy');
     const f_text = document.getElementById('f_text');
+    const f_kind = document.getElementById('f_kind');
+    const f_icon = document.getElementById('f_icon');
+    const iconFieldWrap = document.getElementById('iconFieldWrap');
+    const textFieldWrap = document.getElementById('textFieldWrap');
     const delBtn = document.getElementById('delBtn');
 
-    let labels = []; // {id, x, y, text, hex}
+    let labels = []; // {id, x, y, text, hex, kind, iconId}
     let selectedId = null;
     let gridBase = null;
     let gridInfo = null;
@@ -374,6 +466,87 @@
     const resetGridBtn = document.getElementById('resetGridAdjust');
 
     const viewState = { scale: 1, x: 0, y: 0 };
+
+    if (iconPalette) {
+      iconPalette.innerHTML = ICONS.map(icon => `<div class="icon-chip" draggable="true" data-icon="${icon.id}" title="${icon.label}">${iconSvgMarkup(icon.id)}</div>`).join('');
+      iconPalette.querySelectorAll('.icon-chip').forEach(chip => {
+        chip.addEventListener('dragstart', (evt) => {
+          evt.dataTransfer.effectAllowed = 'copy';
+          evt.dataTransfer.setData('application/x-hexlabel', `icon:${chip.dataset.icon}`);
+          viewport.classList.add('droppable');
+        });
+        chip.addEventListener('dragend', () => {
+          viewport.classList.remove('droppable');
+        });
+      });
+    }
+
+    if (f_icon) {
+      f_icon.innerHTML = ICONS.map(icon => `<option value="${icon.id}">${icon.label}</option>`).join('');
+    }
+
+    if (f_kind) {
+      f_kind.addEventListener('change', () => {
+        updateEditorMode(f_kind.value);
+      });
+    }
+
+    updateEditorMode('text');
+
+    function iconSvgMarkup(iconId) {
+      const icon = ICON_LOOKUP[iconId] || ICONS[0];
+      return `<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">${icon.svg}</svg>`;
+    }
+
+    function normalizeLabel(entry) {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+      const kind = entry.kind === 'icon' ? 'icon' : 'text';
+      const iconId = kind === 'icon' && ICON_LOOKUP[entry.iconId] ? entry.iconId : ICONS[0].id;
+      const xVal = Number(entry.x);
+      const yVal = Number(entry.y);
+      return {
+        id: entry.id || crypto.randomUUID(),
+        kind,
+        iconId,
+        text: typeof entry.text === 'string' ? entry.text : '',
+        x: Number.isFinite(xVal) ? xVal : 0,
+        y: Number.isFinite(yVal) ? yVal : 0,
+        hex: typeof entry.hex === 'string' ? entry.hex : ''
+      };
+    }
+
+    function iconNode(l) {
+      const icon = ICON_LOOKUP[l.iconId] || ICONS[0];
+      const baseSize = gridInfo ? gridInfo.radius * 1.7 : 80;
+      const size = Math.max(40, Math.min(baseSize, 120));
+      const scale = size / 100;
+      return `<g class="map-item icon" data-id="${l.id}" data-icon="${icon.id}" transform="translate(${l.x},${l.y}) scale(${scale}) translate(-50,-50)">${icon.svg}</g>`;
+    }
+
+    function updateEditorMode(mode) {
+      const kind = mode === 'icon' ? 'icon' : 'text';
+      if (f_kind && f_kind.value !== kind) {
+        f_kind.value = kind;
+      }
+      if (iconFieldWrap) {
+        iconFieldWrap.style.display = kind === 'icon' ? '' : 'none';
+      }
+      if (textFieldWrap) {
+        textFieldWrap.style.display = kind === 'icon' ? 'none' : '';
+      }
+      if (f_icon) {
+        if (kind === 'icon' && !ICON_LOOKUP[f_icon.value]) {
+          f_icon.value = ICONS[0].id;
+        }
+        f_icon.disabled = kind !== 'icon';
+      }
+      if (f_text) {
+        f_text.disabled = kind === 'icon';
+      }
+      dlg.dataset.kind = kind;
+    }
 
     // --- Image loading
     function setImage(src) {
@@ -402,7 +575,7 @@
         const text = await f.text();
         try {
           const data = JSON.parse(text);
-          labels = data.labels || [];
+          labels = Array.isArray(data.labels) ? data.labels.map(normalizeLabel).filter(Boolean) : [];
           applyOptions(data.options || {});
           draw(); saveState();
         } catch(err) { alert('Invalid JSON'); }
@@ -494,11 +667,11 @@
     // --- Label rendering
     function draw() {
       const fs = FIXED_FONT_SIZE; const padding = FIXED_PADDING;
-      const items = labels.map(l => labelNode(l, fs, padding)).join('');
+      const items = labels.map(l => l?.kind === 'icon' ? iconNode(l) : labelNode(l, fs, padding)).join('');
       const gridSvg = drawGrid();
       overlay.innerHTML = `<g id="grid">${gridSvg}</g><g id="labels">${items}</g>`;
       // reattach events for labels
-      overlay.querySelectorAll('.label').forEach(g => {
+      overlay.querySelectorAll('.map-item').forEach(g => {
         g.addEventListener('click', (e) => { e.stopPropagation(); openEditor(g.dataset.id); });
       });
       overlay.style.pointerEvents = 'auto';
@@ -513,7 +686,7 @@
       const x = l.x - width/2; const y = l.y - height/2;
       const lines = textLines.map((s,i)=>`<text x="${l.x}" y="${y + padding + lineHeight/2 + i*lineHeight}" font-size="${fs}">${escapeHtml(s)}</text>`).join('');
       const hexLine = tid ? `<text class="hexid" x="${l.x}" y="${y + height - padding - 6}" font-size="10">${escapeHtml(tid)}</text>` : '';
-      return `<g class="label" data-id="${l.id}">
+      return `<g class="map-item label" data-id="${l.id}">
         <rect x="${x}" y="${y}" width="${width}" height="${height}" />
         ${lines}
         ${hexLine}
@@ -532,16 +705,24 @@
       createLabelAt(ix, iy, { duplicateFrom: dupFrom });
     });
 
-    function createLabelAt(ix, iy, { duplicateFrom = null } = {}) {
+    function createLabelAt(ix, iy, { duplicateFrom = null, kind = null, iconId = null } = {}) {
       const snap = snapToGrid(ix, iy);
       const x = snap ? snap.x : ix;
       const y = snap ? snap.y : iy;
+      const base = duplicateFrom ? duplicateFrom : null;
+      const resolvedKind = kind || (base ? base.kind : 'text');
+      let resolvedIcon = iconId || (base && base.kind === 'icon' ? base.iconId : ICONS[0].id);
+      if (!ICON_LOOKUP[resolvedIcon]) {
+        resolvedIcon = ICONS[0].id;
+      }
       const newLabel = {
         id: crypto.randomUUID(),
+        kind: resolvedKind,
+        iconId: resolvedIcon,
         x,
         y,
         hex: snap ? snap.id : '',
-        text: duplicateFrom ? duplicateFrom.text : ''
+        text: resolvedKind === 'icon' ? '' : (base ? base.text : '')
       };
       labels.push(newLabel);
       selectedId = newLabel.id;
@@ -555,7 +736,15 @@
       const l = labels.find(x => x.id === id); if (!l) return;
       f_hex.value = l.hex || '';
       f_xy.value = `${l.x.toFixed(1)}, ${l.y.toFixed(1)}`;
-      f_text.value = l.text || '';
+      const kind = l.kind === 'icon' ? 'icon' : 'text';
+      if (f_icon) {
+        const iconVal = ICON_LOOKUP[l.iconId] ? l.iconId : ICONS[0].id;
+        f_icon.value = iconVal;
+      }
+      if (f_text) {
+        f_text.value = l.text || '';
+      }
+      updateEditorMode(kind);
       delBtn.onclick = () => { if (confirm('Delete this label?')) { labels = labels.filter(x => x.id !== id); dlg.close(); draw(); saveState(); } };
       dlg.dataset.isNew = isNew ? '1' : '';
       dlg.showModal();
@@ -573,14 +762,23 @@
       }
       const l = labels.find(x => x.id === selectedId); if (!l) return;
       l.hex = f_hex.value.trim();
-      l.text = f_text.value;
+      const kind = dlg.dataset.kind === 'icon' ? 'icon' : 'text';
+      l.kind = kind;
+      if (kind === 'icon') {
+        let iconVal = f_icon ? f_icon.value : ICONS[0].id;
+        if (!ICON_LOOKUP[iconVal]) iconVal = ICONS[0].id;
+        l.iconId = iconVal;
+        l.text = '';
+      } else {
+        l.text = f_text ? f_text.value : '';
+      }
       draw(); saveState();
     });
 
     // Drag labels
     let draggingId = null;
     overlay.addEventListener('mousedown', (e) => {
-      const target = e.target.closest('.label');
+      const target = e.target.closest('.map-item');
       if (!target) return;
       draggingId = target.dataset.id; selectedId = draggingId;
       const [startX, startY] = clientToImageXY(e);
@@ -734,7 +932,7 @@
     viewport.addEventListener('pointerdown', (evt) => {
       if (evt.button !== 0) return;
       const target = evt.target;
-      if (target.closest('svg') && target.closest('.label')) return; // let label dragging handle it
+      if (target.closest('svg') && target.closest('.map-item')) return; // let marker dragging handle it
       isPanning = true;
       panPointer = evt.pointerId;
       panStart = { x: evt.clientX - viewState.x, y: evt.clientY - viewState.y };
@@ -856,7 +1054,7 @@
     const newLabelChip = document.getElementById('newLabelChip');
     newLabelChip.addEventListener('dragstart', (evt) => {
       evt.dataTransfer.effectAllowed = 'copy';
-      evt.dataTransfer.setData('application/x-hexlabel', 'new');
+      evt.dataTransfer.setData('application/x-hexlabel', 'text:new');
       viewport.classList.add('droppable');
     });
 
@@ -866,9 +1064,11 @@
 
     function allowLabelDrop(evt) {
       if (!evt.dataTransfer) return;
-      if (evt.dataTransfer.types.includes('application/x-hexlabel')) {
+      const types = Array.from(evt.dataTransfer.types || []);
+      if (types.includes('application/x-hexlabel')) {
         evt.preventDefault();
         evt.dataTransfer.dropEffect = 'copy';
+        viewport.classList.add('droppable');
       }
     }
 
@@ -883,14 +1083,19 @@
       if (!evt.dataTransfer) return;
       const marker = evt.dataTransfer.getData('application/x-hexlabel');
       viewport.classList.remove('droppable');
-      if (marker !== 'new') return;
+      if (!marker) return;
       evt.preventDefault();
       const rect = mapImg.getBoundingClientRect();
       if (evt.clientX < rect.left || evt.clientX > rect.right || evt.clientY < rect.top || evt.clientY > rect.bottom) {
         return;
       }
       const [ix, iy] = clientToImageXY(evt);
-      createLabelAt(ix, iy);
+      if (marker === 'new' || marker === 'text:new') {
+        createLabelAt(ix, iy);
+      } else if (marker.startsWith('icon:')) {
+        const iconId = marker.slice(5);
+        createLabelAt(ix, iy, { kind: 'icon', iconId });
+      }
     });
   </script>
 </body>
