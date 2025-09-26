@@ -130,24 +130,113 @@
   <script>
     // --- Utility: localStorage persistence
     const storageKey = (id) => `hexlabeler:${id}`;
+    const remoteSync = createRemoteSync();
+
+    function saveStateLocal(id, data) {
+      try {
+        localStorage.setItem(storageKey(id), JSON.stringify(data));
+      } catch (err) {
+        console.warn('Failed to persist state locally', err);
+      }
+    }
+
+    function loadStateLocal(id) {
+      const raw = localStorage.getItem(storageKey(id));
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch (err) {
+        console.warn('Failed to parse saved state', err);
+        return null;
+      }
+    }
+
+    async function applyLoadedState(state, id) {
+      labels = Array.isArray(state.labels) ? state.labels : [];
+      applyOptions(state.options || {});
+      const desiredImage = state.imgMeta?.src;
+      if (desiredImage && desiredImage !== mapImg.src) {
+        try {
+          await setImage(desiredImage);
+        } catch (err) {
+          console.warn('Failed to load remote image, continuing with current map', err);
+          draw();
+        }
+      } else {
+        draw();
+      }
+      const snapshot = {
+        labels,
+        options: currentOptions(),
+        imgMeta: state.imgMeta || currentImageMeta()
+      };
+      saveStateLocal(id, snapshot);
+    }
+
+    async function loadState({ preferRemote = true } = {}) {
+      const id = mapId.value.trim() || 'default';
+      if (preferRemote) {
+        const remote = await remoteSync.load(id);
+        if (remote) {
+          await applyLoadedState(remote, id);
+          return true;
+        }
+      }
+      const local = loadStateLocal(id);
+      if (local) {
+        await applyLoadedState(local, id);
+        return true;
+      }
+      labels = [];
+      draw();
+      return false;
+    }
 
     function saveState() {
       const id = mapId.value.trim() || 'default';
       const data = { labels, options: currentOptions(), imgMeta: currentImageMeta() };
-      localStorage.setItem(storageKey(id), JSON.stringify(data));
+      saveStateLocal(id, data);
+      remoteSync.queueSave(id, data);
     }
 
-    function loadState() {
-      const id = mapId.value.trim() || 'default';
-      const raw = localStorage.getItem(storageKey(id));
-      if (!raw) return false;
-      try {
-        const obj = JSON.parse(raw);
-        labels = obj.labels || [];
-        applyOptions(obj.options || {});
-        draw();
-        return true;
-      } catch { return false; }
+    function createRemoteSync() {
+      let pending = null;
+      let timer = null;
+
+      async function pushUpdate() {
+        if (!pending) return;
+        const { id, payload } = pending;
+        pending = null;
+        timer = null;
+        try {
+          await fetch(`/api/maps/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        } catch (err) {
+          console.warn('Failed to sync map to server', err);
+        }
+      }
+
+      return {
+        queueSave(id, payload) {
+          pending = { id, payload };
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(pushUpdate, 600);
+        },
+        async load(id) {
+          try {
+            const res = await fetch(`/api/maps/${encodeURIComponent(id)}`);
+            if (res.status === 404) return null;
+            if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+            return await res.json();
+          } catch (err) {
+            console.warn('Failed to load map from server', err);
+            return null;
+          }
+        }
+      };
     }
 
     function currentImageMeta() {
@@ -371,9 +460,13 @@
     });
 
     // Persist UI -> redraw
-    [mapId].forEach(inp => {
-      inp.addEventListener('input', () => { draw(); saveState(); });
-      inp.addEventListener('change', () => { draw(); saveState(); });
+    mapId.addEventListener('change', async () => {
+      const found = await loadState({ preferRemote: true });
+      if (!found) {
+        labels = [];
+        draw();
+        saveState();
+      }
     });
 
     // Initial image: try to preload the provided path if available
@@ -386,7 +479,10 @@
         console.warn('Failed to load bundled map image:', err);
       }
       // Attempt to load any saved state for default project
-      loadState();
+      const loaded = await loadState({ preferRemote: true });
+      if (!loaded) {
+        saveState();
+      }
     })();
 
     // --- Grid analysis
