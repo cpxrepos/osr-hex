@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP server for the hex labeler web application backed by Google Firebase."""
+"""HTTP server for the hex labeler web app backed by Firebase Realtime Database."""
 
 import json
 import os
