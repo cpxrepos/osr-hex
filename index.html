@@ -83,15 +83,8 @@
   <aside>
     <h1>Hex Labeler</h1>
 
-    <div class="hint">
-      Click the map or drag the "Drag to add label" chip onto a hex — it will snap to the detected grid.
-      Edit the details and repeat. Your work is saved automatically in localStorage. Scroll to zoom and drag the map background
-      to pan.
-
-    </div>
-
-    <h2>Project</h2>
-    <label>Map ID (used for saving)
+    <h2>Map ID (used for saving)</h2>
+    <label>
       <input id="mapId" type="text" placeholder="e.g. dolmenwood" value="dolmenwood" />
     </label>
     <div class="toolbar">
@@ -102,8 +95,10 @@
     <div class="palette">
       <div id="newLabelChip" class="draggable-chip" draggable="true">Drag to add label</div>
     </div>
-    <p class="muted">Tip: Edit a label by clicking it. Delete with the Delete key or the button in the editor.
-      Hold <span class="kbd">Shift</span> while clicking to duplicate a label.</p>
+    <p class="muted">Tip: Drag the "Drag to add label" chip onto a hex — it will snap to the detected grid.
+      Edit the details and repeat. Scroll to zoom and drag the map background
+      to pan.Edit a label by clicking it. Delete with the Delete key or the button in the editor.
+      </p>
 
     <details class="advanced" id="advancedTools">
       <summary>Advanced tools</summary>
