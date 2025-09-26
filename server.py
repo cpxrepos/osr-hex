@@ -1,56 +1,42 @@
 #!/usr/bin/env python3
+"""HTTP server for the hex labeler web application backed by Google Firebase."""
+
 import json
 import os
-import sqlite3
 import threading
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import unquote, urlparse
+
+import firebase_db
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DATA_DIR / "labels.db"
 
-DB_LOCK = threading.Lock()
-DB_CONN = sqlite3.connect(DB_PATH, check_same_thread=False)
-DB_CONN.execute(
-    """
-    CREATE TABLE IF NOT EXISTS maps (
-        id TEXT PRIMARY KEY,
-        labels TEXT NOT NULL,
-        options TEXT,
-        img_meta TEXT,
-        updated_at TEXT NOT NULL
-    )
-    """
-)
-DB_CONN.commit()
+REQUEST_LOCK = threading.Lock()
 
 
 def _json_dump(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _row_to_payload(row):
-    if not row:
+def _normalize_record(record):
+    if not record:
         return None
-    labels = json.loads(row[1]) if row[1] else []
-    options = json.loads(row[2]) if row[2] else {}
-    img_meta = json.loads(row[3]) if row[3] else None
     return {
-        "mapId": row[0],
-        "labels": labels,
-        "options": options,
-        "imgMeta": img_meta,
-        "updatedAt": row[4],
+        "mapId": record.get("mapId"),
+        "labels": record.get("labels", []),
+        "options": record.get("options", {}),
+        "imgMeta": record.get("imgMeta"),
+        "updatedAt": record.get("updatedAt"),
     }
 
 
 class HexLabelHandler(SimpleHTTPRequestHandler):
-    server_version = "HexLabelServer/1.0"
+    server_version = "HexLabelServer/2.0"
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -59,15 +45,12 @@ class HexLabelHandler(SimpleHTTPRequestHandler):
             if not map_id:
                 self.send_error(HTTPStatus.BAD_REQUEST, "Map ID required")
                 return
-            with DB_LOCK:
-                row = DB_CONN.execute(
-                    "SELECT id, labels, options, img_meta, updated_at FROM maps WHERE id = ?",
-                    (map_id,),
-                ).fetchone()
-            if not row:
+            with REQUEST_LOCK:
+                record = firebase_db.get_map_record(map_id)
+            if not record:
                 self.send_error(HTTPStatus.NOT_FOUND, "Map not found")
                 return
-            payload = _row_to_payload(row)
+            payload = _normalize_record(record)
             body = _json_dump(payload).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -103,23 +86,15 @@ class HexLabelHandler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "'options' must be an object")
             return
         timestamp = datetime.now(timezone.utc).isoformat()
-        labels_blob = _json_dump(labels)
-        options_blob = _json_dump(options)
-        img_blob = _json_dump(img_meta) if img_meta is not None else None
-        with DB_LOCK:
-            DB_CONN.execute(
-                """
-                INSERT INTO maps (id, labels, options, img_meta, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    labels = excluded.labels,
-                    options = excluded.options,
-                    img_meta = excluded.img_meta,
-                    updated_at = excluded.updated_at
-                """,
-                (map_id, labels_blob, options_blob, img_blob, timestamp),
-            )
-            DB_CONN.commit()
+        record = {
+            "mapId": map_id,
+            "labels": labels,
+            "options": options,
+            "imgMeta": img_meta,
+            "updatedAt": timestamp,
+        }
+        with REQUEST_LOCK:
+            firebase_db.upsert_map_record(map_id, record)
         response = {"ok": True, "updatedAt": timestamp}
         body = _json_dump(response).encode("utf-8")
         self.send_response(HTTPStatus.OK)
@@ -129,7 +104,6 @@ class HexLabelHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format, *args):
-        # Reduce default noisy logging, include timestamp.
         message = "%s - - [%s] %s\n" % (
             self.client_address[0],
             self.log_date_time_string(),
@@ -143,6 +117,7 @@ class HexLabelHandler(SimpleHTTPRequestHandler):
 
 class HexLabelServer(ThreadingHTTPServer):
     def __init__(self, server_address, handler_class=HexLabelHandler):
+        firebase_db.initialize()
         super().__init__(server_address, handler_class)
         self.log_stream = open(DATA_DIR / "server.log", "a", encoding="utf-8")
 
@@ -162,8 +137,6 @@ def run(host="0.0.0.0", port=8000):
         print("\nShutting down server...")
     finally:
         server.server_close()
-        with DB_LOCK:
-            DB_CONN.close()
 
 
 if __name__ == "__main__":
