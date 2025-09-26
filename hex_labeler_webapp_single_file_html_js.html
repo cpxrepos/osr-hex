@@ -153,10 +153,20 @@
       }
     }
 
+    function sanitizeImageSrc(src) {
+      if (!src) return src;
+      if (/^file:/i.test(src)) {
+        const parts = src.split(/[\\\/]/);
+        const filename = parts[parts.length - 1];
+        return filename || null;
+      }
+      return src;
+    }
+
     async function applyLoadedState(state, id) {
       labels = Array.isArray(state.labels) ? state.labels : [];
       applyOptions(state.options || {});
-      const desiredImage = state.imgMeta?.src;
+      const desiredImage = sanitizeImageSrc(state.imgMeta?.src);
       if (desiredImage && desiredImage !== mapImg.src) {
         try {
           await setImage(desiredImage);
@@ -291,7 +301,8 @@
 
     function currentImageMeta() {
       const img = mapImg;
-      return { naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, src: img.src };
+      const rawSrc = img.getAttribute('src') || img.src;
+      return { naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, src: sanitizeImageSrc(rawSrc) };
     }
 
     // --- DOM refs
