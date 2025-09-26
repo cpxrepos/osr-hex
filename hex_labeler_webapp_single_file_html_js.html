@@ -73,8 +73,8 @@
     <h1>Hex Labeler</h1>
 
     <div class="hint">
-      1) Load the map image. 2) Click the map or drag the "Drag to add label" chip onto a hex — it will snap to the detected grid.
-      3) Edit the details and repeat. Your work is saved automatically in localStorage. Scroll to zoom and drag the map background
+      Click the map or drag the "Drag to add label" chip onto a hex — it will snap to the detected grid.
+      Edit the details and repeat. Your work is saved automatically in localStorage. Scroll to zoom and drag the map background
       to pan.
 
     </div>
@@ -83,34 +83,11 @@
     <label>Map ID (used for saving)
       <input id="mapId" type="text" placeholder="e.g. dolmenwood" value="dolmenwood" />
     </label>
-    <div class="row">
-      <label>Load image file
-        <input id="fileInput" type="file" accept="image/*" />
-      </label>
-      <label>or URL
-        <input id="urlInput" type="text" placeholder="https://..." />
-      </label>
-    </div>
     <div class="toolbar">
-      <button id="loadUrlBtn">Load URL</button>
-      <button id="fitBtn">Fit to window</button>
       <button id="exportBtn">Export JSON</button>
       <button id="importBtn">Import JSON</button>
-      <button id="clearBtn" class="warn">Clear labels</button>
     </div>
 
-    <h2>Grid</h2>
-    <label><input id="showGrid" type="checkbox" checked /> Show hex overlay</label>
-
-    <h2>Label style</h2>
-    <div class="row">
-      <label>Font size
-        <input id="fontSize" type="number" step="1" value="12" />
-      </label>
-      <label>Box padding
-        <input id="pad" type="number" step="1" value="4" />
-      </label>
-    </div>
     <div class="palette">
       <div id="newLabelChip" class="draggable-chip" draggable="true">Drag to add label</div>
     </div>
@@ -186,18 +163,12 @@
     const canvasWrap = document.getElementById('canvasWrap');
 
     // Controls
-    const fileInput = document.getElementById('fileInput');
-    const urlInput = document.getElementById('urlInput');
-    const loadUrlBtn = document.getElementById('loadUrlBtn');
-    const fitBtn = document.getElementById('fitBtn');
     const exportBtn = document.getElementById('exportBtn');
     const importBtn = document.getElementById('importBtn');
-    const clearBtn = document.getElementById('clearBtn');
 
-    const showGrid = document.getElementById('showGrid');
-
-    const fontSize = document.getElementById('fontSize');
-    const pad = document.getElementById('pad');
+    const FIXED_FONT_SIZE = 36;
+    const FIXED_PADDING = 0;
+    const SHOW_GRID = true;
 
     // Modal
     const dlg = document.getElementById('dlg');
@@ -220,21 +191,6 @@
         mapImg.src = src;
       });
     }
-
-    fileInput.addEventListener('change', (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const url = URL.createObjectURL(file);
-      setImage(url).then(() => { if (!loadState()) labels = []; draw(); });
-    });
-
-    loadUrlBtn.addEventListener('click', () => {
-      const u = urlInput.value.trim();
-      if (!u) return;
-      setImage(u).then(() => { if (!loadState()) labels = []; draw(); });
-    });
-
-    fitBtn.addEventListener('click', () => fitToWindow(true));
 
     // --- Export/Import
     exportBtn.addEventListener('click', () => {
@@ -262,25 +218,18 @@
       inp.click();
     });
 
-    clearBtn.addEventListener('click', () => {
-      if (!confirm('Delete all labels?')) return;
-      labels = []; selectedId = null; draw(); saveState();
-    });
-
     // --- Grid helpers
     function currentOptions() {
-      return { showGrid: showGrid.checked, fontSize: +fontSize.value, padding: +pad.value };
+      return { showGrid: SHOW_GRID, fontSize: FIXED_FONT_SIZE, padding: FIXED_PADDING };
     }
 
     function applyOptions(opts) {
-      if ('showGrid' in opts) showGrid.checked = !!opts.showGrid;
-      if (opts.fontSize != null) fontSize.value = opts.fontSize;
-      if (opts.padding != null) pad.value = opts.padding;
+      // Options are fixed; method retained for compatibility with saved data.
     }
 
     // Draw grid visualization
     function drawGrid() {
-      if (!showGrid.checked || !gridInfo) return '';
+      if (!SHOW_GRID || !gridInfo) return '';
       const pieces = [];
       const { cells, radius } = gridInfo;
       for (const cell of cells) {
@@ -311,7 +260,7 @@
 
     // --- Label rendering
     function draw() {
-      const fs = +fontSize.value; const padding = +pad.value;
+      const fs = FIXED_FONT_SIZE; const padding = FIXED_PADDING;
       const items = labels.map(l => labelNode(l, fs, padding)).join('');
       const gridSvg = drawGrid();
       overlay.innerHTML = `<g id="grid">${gridSvg}</g><g id="labels">${items}</g>`;
@@ -422,7 +371,7 @@
     });
 
     // Persist UI -> redraw
-    [showGrid, fontSize, pad, mapId].forEach(inp => {
+    [mapId].forEach(inp => {
       inp.addEventListener('input', () => { draw(); saveState(); });
       inp.addEventListener('change', () => { draw(); saveState(); });
     });
