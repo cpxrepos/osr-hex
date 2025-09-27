@@ -10,6 +10,18 @@
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; }
     body { display: grid; grid-template-columns: var(--panel-w) 1fr; gap: 0; }
     aside { padding: 14px 14px 18px; border-right: 1px solid #ddd; overflow:auto; }
+    .label-list-panel { margin-top: 18px; display:flex; flex-direction:column; gap:8px; }
+    .label-list-header { display:flex; align-items:center; gap:10px; }
+    .label-list-header h2 { margin:0; flex:0 0 auto; }
+    #labelFilter { flex:1; min-width:0; }
+    #labelList { max-height: 260px; overflow:auto; border:1px solid #d6d9dd; border-radius:10px; background:#fff; padding:4px; display:flex; flex-direction:column; gap:4px; }
+    .label-list-item { display:flex; align-items:center; gap:10px; width:100%; padding:8px 10px; border:none; background:transparent; border-radius:8px; cursor:pointer; text-align:left; font-size:12px; transition:background 0.15s ease; }
+    .label-list-item:hover { background:#eef1f7; }
+    .label-list-item.is-active { background:#dfe7ff; }
+    .label-list-hex { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-weight:600; color:#333; min-width:3.5em; }
+    .label-list-title { flex:1; min-width:0; color:#222; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .label-list-kind { font-size:11px; color:#5a6270; text-transform:uppercase; letter-spacing:0.06em; }
+    .label-list-empty { padding:14px 12px; text-align:center; font-size:12px; color:#666; }
     main { position: relative; overflow: hidden; background:#111; }
 
     .viewport { position: relative; width: 100%; height: 100%; overflow:hidden; cursor: grab; }
@@ -140,6 +152,14 @@
         <p class="muted">Use these controls to align the overlay grid with the underlying map art. Scale adjusts hex size; offsets move the grid.</p>
       </div>
     </details>
+
+    <div class="label-list-panel">
+      <div class="label-list-header">
+        <h2>Labels</h2>
+        <input id="labelFilter" type="text" placeholder="Filter labels..." aria-label="Filter labels" />
+      </div>
+      <div id="labelList" role="listbox" aria-label="Map labels"></div>
+    </div>
   </aside>
 
   <main>
@@ -368,6 +388,8 @@
     const viewport = document.getElementById('viewport');
     const canvasWrap = document.getElementById('canvasWrap');
     const iconPalette = document.getElementById('iconPalette');
+    const labelList = document.getElementById('labelList');
+    const labelFilter = document.getElementById('labelFilter');
 
     // Controls
     const exportBtn = document.getElementById('exportBtn');
@@ -482,6 +504,28 @@
       });
     }
 
+    if (labelFilter) {
+      labelFilter.addEventListener('input', () => {
+        renderLabelList();
+      });
+    }
+
+    if (labelList) {
+      labelList.addEventListener('click', (evt) => {
+        const item = evt.target.closest('.label-list-item');
+        if (!item) return;
+        const id = item.dataset.id;
+        const label = labels.find(x => x.id === id);
+        if (!label) return;
+        selectedId = id;
+        renderLabelList();
+        focusLabelOnMap(label);
+        openEditor(id);
+      });
+    }
+
+    renderLabelList();
+
     if (f_icon) {
       f_icon.innerHTML = ICONS.map(icon => `<option value="${icon.id}">${icon.label}</option>`).join('');
     }
@@ -587,6 +631,7 @@
           labels = Array.isArray(data.labels) ? data.labels.map(normalizeLabel).filter(Boolean) : [];
           applyOptions(data.options || {});
           draw(); saveState();
+          renderLabelList();
         } catch(err) { alert('Invalid JSON'); }
       };
       inp.click();
@@ -684,6 +729,7 @@
         g.addEventListener('click', (e) => { e.stopPropagation(); openEditor(g.dataset.id); });
       });
       overlay.style.pointerEvents = 'auto';
+      renderLabelList();
     }
 
     function labelNode(l, fs, padding) {
@@ -704,6 +750,52 @@
 
     function escapeHtml(s){
       return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+    }
+
+    function renderLabelList() {
+      if (!labelList) return;
+      const filterText = labelFilter ? labelFilter.value.trim().toLowerCase() : '';
+      const entries = [];
+      for (const l of labels) {
+        if (!l) continue;
+        const hex = (l.hex || '').trim();
+        const iconName = l.kind === 'icon' ? (ICON_LOOKUP[l.iconId]?.label || l.iconId || 'Icon') : '';
+        const firstLine = (l.text || '').split('\n').map(part => part.trim()).find(Boolean) || '';
+        const title = l.kind === 'icon' ? iconName : (firstLine || 'Untitled label');
+        const haystack = `${hex} ${iconName} ${l.text || ''}`.toLowerCase();
+        if (filterText && !haystack.includes(filterText)) {
+          continue;
+        }
+        const hexDisplay = hex ? escapeHtml(hex) : '—';
+        const titleDisplay = title ? escapeHtml(title) : 'Untitled label';
+        const kindLabel = l.kind === 'icon' ? 'Icon' : 'Text';
+        entries.push(`
+          <button type="button" class="label-list-item${selectedId === l.id ? ' is-active' : ''}" data-id="${l.id}">
+            <span class="label-list-hex">${hexDisplay}</span>
+            <span class="label-list-title">${titleDisplay}</span>
+            <span class="label-list-kind">${kindLabel}</span>
+          </button>
+        `);
+      }
+      if (!entries.length) {
+        labelList.innerHTML = `<div class="label-list-empty">${labels.length ? 'No matching labels.' : 'No labels yet.'}</div>`;
+        return;
+      }
+      labelList.innerHTML = entries.join('');
+    }
+
+    function focusLabelOnMap(label) {
+      if (!label) return;
+      fitToWindow(true);
+      requestAnimationFrame(() => {
+        const scale = viewState.scale || 1;
+        const vw = viewport.clientWidth;
+        const vh = viewport.clientHeight;
+        if (!vw || !vh) return;
+        viewState.x = vw / 2 - label.x * scale;
+        viewState.y = vh / 2 - label.y * scale;
+        applyView();
+      });
     }
 
     // --- Interactions
