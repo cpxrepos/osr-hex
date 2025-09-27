@@ -761,7 +761,9 @@
         const hex = (l.hex || '').trim();
         const iconName = l.kind === 'icon' ? (ICON_LOOKUP[l.iconId]?.label || l.iconId || 'Icon') : '';
         const firstLine = (l.text || '').split('\n').map(part => part.trim()).find(Boolean) || '';
-        const title = l.kind === 'icon' ? iconName : (firstLine || 'Untitled label');
+        const title = l.kind === 'icon'
+          ? (firstLine || iconName)
+          : (firstLine || 'Untitled label');
         const haystack = `${hex} ${iconName} ${l.text || ''}`.toLowerCase();
         if (filterText && !haystack.includes(filterText)) {
           continue;
