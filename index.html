@@ -20,7 +20,7 @@
     .label-list-item.is-active { background:#dfe7ff; }
     .label-list-hex { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-weight:600; color:#333; min-width:3.5em; }
     .label-list-title { flex:1; min-width:0; color:#222; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .label-list-kind { font-size:11px; color:#5a6270; text-transform:uppercase; letter-spacing:0.06em; }
+    .label-list-icon-label { flex:1; min-width:0; color:#5a6270; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .label-list-empty { padding:14px 12px; text-align:center; font-size:12px; color:#666; }
     main { position: relative; overflow: hidden; background:#111; }
 
@@ -761,21 +761,22 @@
         const hex = (l.hex || '').trim();
         const iconName = l.kind === 'icon' ? (ICON_LOOKUP[l.iconId]?.label || l.iconId || 'Icon') : '';
         const firstLine = (l.text || '').split('\n').map(part => part.trim()).find(Boolean) || '';
+        const iconLabel = l.kind === 'icon' ? firstLine : '';
         const title = l.kind === 'icon'
-          ? (firstLine || iconName)
+          ? (iconName || 'Icon')
           : (firstLine || 'Untitled label');
         const haystack = `${hex} ${iconName} ${l.text || ''}`.toLowerCase();
         if (filterText && !haystack.includes(filterText)) {
           continue;
         }
         const hexDisplay = hex ? escapeHtml(hex) : '—';
+        const iconLabelDisplay = iconLabel ? escapeHtml(iconLabel) : (l.kind === 'icon' ? 'Untitled label' : '');
         const titleDisplay = title ? escapeHtml(title) : 'Untitled label';
-        const kindLabel = l.kind === 'icon' ? (iconName || 'Icon') : 'Text';
         entries.push(`
           <button type="button" class="label-list-item${selectedId === l.id ? ' is-active' : ''}" data-id="${l.id}">
             <span class="label-list-hex">${hexDisplay}</span>
+            ${l.kind === 'icon' ? `<span class="label-list-icon-label">${iconLabelDisplay}</span>` : ''}
             <span class="label-list-title">${titleDisplay}</span>
-            <span class="label-list-kind">${kindLabel}</span>
           </button>
         `);
       }
