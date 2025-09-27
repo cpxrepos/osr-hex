@@ -113,6 +113,8 @@
       <input id="mapId" type="text" placeholder="e.g. dolmenwood" value="dolmenwood" />
     </label>
     <div class="toolbar">
+      <button id="undoBtn" type="button" disabled>Undo</button>
+      <button id="redoBtn" type="button" disabled>Redo</button>
       <button id="exportBtn">Export JSON</button>
       <button id="importBtn">Import JSON</button>
     </div>
@@ -210,6 +212,38 @@
     const storageKey = (id) => `hexlabeler:${id}`;
     const remoteSync = createRemoteSync();
 
+    let labels = []; // {id, x, y, text, hex, kind, iconId}
+    let selectedId = null;
+
+    const undoStack = [];
+    const redoStack = [];
+    const HISTORY_LIMIT = 100;
+
+    function snapshotState() {
+      const options = currentOptions();
+      return {
+        labels: labels.map(label => ({ ...label })),
+        options: {
+          ...options,
+          gridAdjust: { ...options.gridAdjust }
+        },
+        imgMeta: { ...currentImageMeta() }
+      };
+    }
+
+    function pushHistory(snapshot = snapshotState()) {
+      undoStack.push(snapshot);
+      if (undoStack.length > HISTORY_LIMIT) {
+        undoStack.shift();
+      }
+      updateHistoryControls();
+    }
+
+    function clearRedoStack() {
+      redoStack.length = 0;
+      updateHistoryControls();
+    }
+
     function saveStateLocal(id, data) {
       try {
         localStorage.setItem(storageKey(id), JSON.stringify(data));
@@ -241,6 +275,7 @@
 
     async function applyLoadedState(state, id) {
       labels = Array.isArray(state.labels) ? state.labels.map(normalizeLabel).filter(Boolean) : [];
+      selectedId = null;
       applyOptions(state.options || {});
       const desiredImage = sanitizeImageSrc(state.imgMeta?.src);
       if (desiredImage && desiredImage !== mapImg.src) {
@@ -259,6 +294,9 @@
         imgMeta: state.imgMeta || currentImageMeta()
       };
       saveStateLocal(id, snapshot);
+      undoStack.length = 0;
+      redoStack.length = 0;
+      updateHistoryControls();
     }
 
     async function loadState({ preferRemote = true } = {}) {
@@ -276,7 +314,11 @@
         return true;
       }
       labels = [];
+      selectedId = null;
       draw();
+      undoStack.length = 0;
+      redoStack.length = 0;
+      updateHistoryControls();
       return false;
     }
 
@@ -285,6 +327,46 @@
       const data = { labels, options: currentOptions(), imgMeta: currentImageMeta() };
       saveStateLocal(id, data);
       remoteSync.queueSave(id, data);
+    }
+
+    async function applyHistoryState(snapshot) {
+      if (!snapshot) return;
+      selectedId = null;
+      labels = Array.isArray(snapshot.labels) ? snapshot.labels.map(normalizeLabel).filter(Boolean) : [];
+      applyOptions(snapshot.options || {});
+      const targetMeta = snapshot.imgMeta || {};
+      const desiredSrc = sanitizeImageSrc(targetMeta.src);
+      const currentMeta = currentImageMeta();
+      if (desiredSrc && desiredSrc !== currentMeta.src) {
+        try {
+          await setImage(desiredSrc);
+        } catch (err) {
+          console.warn('Failed to load image from history state', err);
+        }
+      }
+      draw();
+      renderLabelList();
+      saveState();
+      updateHistoryControls();
+    }
+
+    async function handleUndo() {
+      if (!undoStack.length) return;
+      const snapshot = undoStack.pop();
+      redoStack.push(snapshotState());
+      if (redoStack.length > HISTORY_LIMIT) {
+        redoStack.shift();
+      }
+      updateHistoryControls();
+      await applyHistoryState(snapshot);
+    }
+
+    async function handleRedo() {
+      if (!redoStack.length) return;
+      pushHistory();
+      const snapshot = redoStack.pop();
+      updateHistoryControls();
+      await applyHistoryState(snapshot);
     }
 
     function createRemoteSync() {
@@ -392,8 +474,15 @@
     const labelFilter = document.getElementById('labelFilter');
 
     // Controls
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
     const exportBtn = document.getElementById('exportBtn');
     const importBtn = document.getElementById('importBtn');
+
+    function updateHistoryControls() {
+      if (undoBtn) undoBtn.disabled = undoStack.length === 0;
+      if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+    }
 
     const FIXED_FONT_SIZE = 36;
     const FIXED_PADDING = 0;
@@ -473,8 +562,6 @@
     const textFieldWrap = document.getElementById('textFieldWrap');
     const delBtn = document.getElementById('delBtn');
 
-    let labels = []; // {id, x, y, text, hex, kind, iconId}
-    let selectedId = null;
     let gridBase = null;
     let gridInfo = null;
 
@@ -509,6 +596,16 @@
         renderLabelList();
       });
     }
+
+    if (undoBtn) {
+      undoBtn.addEventListener('click', () => { handleUndo(); });
+    }
+
+    if (redoBtn) {
+      redoBtn.addEventListener('click', () => { handleRedo(); });
+    }
+
+    updateHistoryControls();
 
     if (labelList) {
       labelList.addEventListener('click', (evt) => {
@@ -628,6 +725,8 @@
         const text = await f.text();
         try {
           const data = JSON.parse(text);
+          pushHistory();
+          clearRedoStack();
           labels = Array.isArray(data.labels) ? data.labels.map(normalizeLabel).filter(Boolean) : [];
           applyOptions(data.options || {});
           draw(); saveState();
@@ -810,6 +909,8 @@
     });
 
     function createLabelAt(ix, iy, { duplicateFrom = null, kind = null, iconId = null } = {}) {
+      pushHistory();
+      clearRedoStack();
       const snap = snapToGrid(ix, iy);
       const x = snap ? snap.x : ix;
       const y = snap ? snap.y : iy;
@@ -849,7 +950,16 @@
         f_text.value = l.text || '';
       }
       updateEditorMode(kind);
-      delBtn.onclick = () => { if (confirm('Delete this label?')) { labels = labels.filter(x => x.id !== id); dlg.close(); draw(); saveState(); } };
+      delBtn.onclick = () => {
+        if (!confirm('Delete this label?')) return;
+        pushHistory();
+        clearRedoStack();
+        labels = labels.filter(x => x.id !== id);
+        if (selectedId === id) selectedId = null;
+        dlg.close();
+        draw();
+        saveState();
+      };
       dlg.dataset.isNew = isNew ? '1' : '';
       dlg.showModal();
     }
@@ -865,6 +975,8 @@
         return;
       }
       const l = labels.find(x => x.id === selectedId); if (!l) return;
+      pushHistory();
+      clearRedoStack();
       l.hex = f_hex.value.trim();
       const kind = dlg.dataset.kind === 'icon' ? 'icon' : 'text';
       l.kind = kind;
@@ -885,22 +997,72 @@
       draggingId = target.dataset.id; selectedId = draggingId;
       const [startX, startY] = clientToImageXY(e);
       const l = labels.find(x => x.id === draggingId);
+      if (!l) return;
       const ox = l.x - startX, oy = l.y - startY;
+      let historyCaptured = false;
+      let moved = false;
       function move(ev){
         const [mx, my] = clientToImageXY(ev);
         let nx = mx + ox, ny = my + oy;
+        if (!historyCaptured) {
+          pushHistory();
+          clearRedoStack();
+          historyCaptured = true;
+        }
         const snap = snapToGrid(nx, ny);
         if (snap) { l.x = snap.x; l.y = snap.y; l.hex = snap.id; }
         else { l.x = nx; l.y = ny; }
+        moved = true;
         draw();
       }
-      function up(){ window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); saveState(); }
+      function up(){
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+        if (moved) {
+          saveState();
+        }
+      }
       window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
     });
 
-    // Keyboard delete
+    function isEditableElement(el) {
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+    }
+
+    // Keyboard shortcuts
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Delete' && selectedId) { labels = labels.filter(l => l.id !== selectedId); selectedId = null; draw(); saveState(); }
+      const target = e.target;
+      const editable = isEditableElement(target);
+      const modifier = e.metaKey || e.ctrlKey;
+
+      if (modifier && (e.key === 'z' || e.key === 'Z')) {
+        if (editable) return;
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+        return;
+      }
+
+      if (modifier && (e.key === 'y' || e.key === 'Y')) {
+        if (editable) return;
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      if (e.key === 'Delete' && selectedId && !editable) {
+        pushHistory();
+        clearRedoStack();
+        labels = labels.filter(l => l.id !== selectedId);
+        selectedId = null;
+        draw();
+        saveState();
+      }
     });
 
     // Persist UI -> redraw
@@ -908,6 +1070,7 @@
       const found = await loadState({ preferRemote: true });
       if (!found) {
         labels = [];
+        selectedId = null;
         draw();
         saveState();
       }
