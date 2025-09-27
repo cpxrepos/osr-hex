@@ -770,7 +770,7 @@
         }
         const hexDisplay = hex ? escapeHtml(hex) : '—';
         const titleDisplay = title ? escapeHtml(title) : 'Untitled label';
-        const kindLabel = l.kind === 'icon' ? 'Icon' : 'Text';
+        const kindLabel = l.kind === 'icon' ? (iconName || 'Icon') : 'Text';
         entries.push(`
           <button type="button" class="label-list-item${selectedId === l.id ? ' is-active' : ''}" data-id="${l.id}">
             <span class="label-list-hex">${hexDisplay}</span>
