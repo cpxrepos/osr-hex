@@ -38,6 +38,7 @@
     .row { display:flex; gap: 8px; }
     .row > * { flex: 1; }
     button { padding: 8px 10px; border:1px solid #bbb; background:#f8f8f8; border-radius:10px; cursor:pointer; font-size: 13px; }
+    button.is-active { background:#222; color:#fff; border-color:#222; }
     button.primary { background:#222; color:#fff; border-color:#222; }
     button.warn { background:#fff3f3; border-color:#dd7777; color:#b10000; }
     .muted { color:#666; font-size: 12px; }
@@ -94,6 +95,12 @@
     .grid-cell { fill: none; stroke: rgba(0,0,0,0.25); stroke-width:1; pointer-events:none; }
     .grid-label { font-family: ui-sans-serif, system-ui, -apple-system; font-size:11px; fill:rgba(0,0,0,0.4); pointer-events:none; }
 
+    .measurement-overlay { pointer-events: none; }
+    .measurement-overlay line { stroke:#ff3366; stroke-width:3; stroke-dasharray:6 4; }
+    .measurement-overlay circle { fill:#ff3366; stroke:#fff; stroke-width:2; }
+    .measurement-overlay text { font-family: ui-sans-serif, system-ui, -apple-system; font-size:14px; fill:#fff; stroke:#111; stroke-width:3; paint-order: stroke fill; font-weight:600; }
+    .measurement-overlay text tspan { font-size:11px; font-weight:500; }
+
     .hint { background:#f6f7f9; border:1px dashed #cfd6e0; padding:8px; border-radius:8px; font-size:12px; }
     .kbd { padding:0 6px; border:1px solid #aaa; border-bottom-width:2px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#fff; font-size:11px; }
 
@@ -117,6 +124,8 @@
       <button id="redoBtn" type="button" disabled>Redo</button>
       <button id="exportBtn">Export JSON</button>
       <button id="importBtn">Import JSON</button>
+      <button id="measureToggle" type="button" aria-pressed="false">Measure distance</button>
+      <button id="clearMeasurementBtn" type="button" disabled>Clear measurement</button>
     </div>
 
     <div class="palette">
@@ -214,6 +223,10 @@
 
     let labels = []; // {id, x, y, text, hex, kind, iconId}
     let selectedId = null;
+
+    let measurementMode = false;
+    let measurementStart = null;
+    let measurementResult = null;
 
     const undoStack = [];
     const redoStack = [];
@@ -478,10 +491,39 @@
     const redoBtn = document.getElementById('redoBtn');
     const exportBtn = document.getElementById('exportBtn');
     const importBtn = document.getElementById('importBtn');
+    const measureToggle = document.getElementById('measureToggle');
+    const clearMeasurementBtn = document.getElementById('clearMeasurementBtn');
 
     function updateHistoryControls() {
       if (undoBtn) undoBtn.disabled = undoStack.length === 0;
       if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+    }
+
+    function updateMeasurementControls() {
+      if (measureToggle) {
+        measureToggle.classList.toggle('is-active', measurementMode);
+        measureToggle.setAttribute('aria-pressed', measurementMode ? 'true' : 'false');
+      }
+      if (clearMeasurementBtn) {
+        clearMeasurementBtn.disabled = !(measurementMode && (measurementStart || measurementResult));
+      }
+    }
+
+    function setMeasurementMode(enabled) {
+      measurementMode = Boolean(enabled);
+      if (!measurementMode) {
+        measurementStart = null;
+        measurementResult = null;
+      }
+      updateMeasurementControls();
+      draw();
+    }
+
+    function clearMeasurement() {
+      measurementStart = null;
+      measurementResult = null;
+      updateMeasurementControls();
+      draw();
     }
 
     const FIXED_FONT_SIZE = 36;
@@ -736,6 +778,20 @@
       inp.click();
     });
 
+    if (measureToggle) {
+      measureToggle.addEventListener('click', () => {
+        setMeasurementMode(!measurementMode);
+      });
+    }
+
+    if (clearMeasurementBtn) {
+      clearMeasurementBtn.addEventListener('click', () => {
+        if (!measurementMode) return;
+        if (!measurementStart && !measurementResult) return;
+        clearMeasurement();
+      });
+    }
+
     // --- Grid helpers
     function currentOptions() {
       return {
@@ -819,16 +875,119 @@
 
     // --- Label rendering
     function draw() {
+      updateMeasurementControls();
       const fs = FIXED_FONT_SIZE; const padding = FIXED_PADDING;
       const items = labels.map(l => l?.kind === 'icon' ? iconNode(l) : labelNode(l, fs, padding)).join('');
       const gridSvg = drawGrid();
-      overlay.innerHTML = `<g id="grid">${gridSvg}</g><g id="labels">${items}</g>`;
+      const measurementSvg = drawMeasurement();
+      overlay.innerHTML = `<g id="grid">${gridSvg}</g><g id="labels">${items}</g><g id="measurement" class="measurement-overlay">${measurementSvg}</g>`;
       // reattach events for labels
       overlay.querySelectorAll('.map-item').forEach(g => {
-        g.addEventListener('click', (e) => { e.stopPropagation(); openEditor(g.dataset.id); });
+        g.addEventListener('click', (e) => {
+          if (measurementMode) {
+            return;
+          }
+          e.stopPropagation();
+          openEditor(g.dataset.id);
+        });
       });
       overlay.style.pointerEvents = 'auto';
       renderLabelList();
+    }
+
+    function drawMeasurement() {
+      if ((!measurementMode && !measurementStart && !measurementResult) || !gridInfo) return '';
+      const pieces = [];
+      const markerRadius = gridInfo ? Math.max(6, gridInfo.radius * 0.25) : 6;
+      if (measurementStart) {
+        const startCell = findGridCell(measurementStart.col, measurementStart.row);
+        if (startCell) {
+          pieces.push(`<circle cx="${startCell.x}" cy="${startCell.y}" r="${markerRadius}" />`);
+        } else {
+          measurementStart = null;
+          updateMeasurementControls();
+        }
+      }
+      if (measurementResult) {
+        const { startCol, startRow, endCol, endRow, hexDistance, deltaCols, deltaRows } = measurementResult;
+        const startCell = findGridCell(startCol, startRow);
+        const endCell = findGridCell(endCol, endRow);
+        if (!startCell || !endCell) {
+          measurementResult = null;
+          updateMeasurementControls();
+          return pieces.join('');
+        }
+        const pixelDistance = Math.hypot(endCell.x - startCell.x, endCell.y - startCell.y);
+        pieces.push(`<line x1="${startCell.x}" y1="${startCell.y}" x2="${endCell.x}" y2="${endCell.y}" />`);
+        pieces.push(`<circle cx="${startCell.x}" cy="${startCell.y}" r="${markerRadius}" />`);
+        pieces.push(`<circle cx="${endCell.x}" cy="${endCell.y}" r="${markerRadius}" />`);
+        const midX = (startCell.x + endCell.x) / 2;
+        const midY = (startCell.y + endCell.y) / 2;
+        const hexLabel = `${hexDistance} hex${hexDistance === 1 ? '' : 'es'}`;
+        const pixelLabel = `${pixelDistance.toFixed(1)} px`;
+        const deltaLabel = `Δcol ${formatDelta(deltaCols)}, Δrow ${formatDelta(deltaRows)}`;
+        pieces.push(`<text x="${midX}" y="${midY - 12}">${hexLabel}<tspan x="${midX}" dy="14">${pixelLabel}</tspan><tspan x="${midX}" dy="14">${deltaLabel}</tspan></text>`);
+      }
+      return pieces.join('');
+    }
+
+    function handleMeasurementClick(evt) {
+      evt.stopPropagation();
+      evt.preventDefault();
+      if (!measurementMode || !gridInfo || isPanning) return;
+      const [ix, iy] = clientToImageXY(evt);
+      const snap = snapToGrid(ix, iy);
+      if (!snap) return;
+      if (!measurementStart) {
+        measurementStart = { col: snap.col, row: snap.row };
+        measurementResult = null;
+        updateMeasurementControls();
+        draw();
+        return;
+      }
+      const startRef = measurementStart;
+      const endRef = { col: snap.col, row: snap.row };
+      measurementResult = createMeasurementResult(startRef, endRef);
+      measurementStart = null;
+      updateMeasurementControls();
+      draw();
+    }
+
+    function createMeasurementResult(startCell, endCell) {
+      const hexDistance = hexDistanceCells(startCell, endCell);
+      const deltaCols = endCell.col - startCell.col;
+      const deltaRows = endCell.row - startCell.row;
+      return {
+        startCol: startCell.col,
+        startRow: startCell.row,
+        endCol: endCell.col,
+        endRow: endCell.row,
+        hexDistance,
+        deltaCols,
+        deltaRows
+      };
+    }
+
+    function hexDistanceCells(a, b) {
+      const ac = oddqToCube(a.col, a.row);
+      const bc = oddqToCube(b.col, b.row);
+      return Math.max(Math.abs(ac.x - bc.x), Math.abs(ac.y - bc.y), Math.abs(ac.z - bc.z));
+    }
+
+    function oddqToCube(col, row) {
+      const x = col;
+      const z = row - ((col - (col & 1)) / 2);
+      const y = -x - z;
+      return { x, y, z };
+    }
+
+    function formatDelta(value) {
+      return value >= 0 ? `+${value}` : `${value}`;
+    }
+
+    function findGridCell(col, row) {
+      if (!gridInfo || !Array.isArray(gridInfo.cells)) return null;
+      return gridInfo.cells.find(cell => cell.col === col && cell.row === row) || null;
     }
 
     function labelNode(l, fs, padding) {
@@ -902,10 +1061,28 @@
 
     // --- Interactions
     overlay.addEventListener('click', (e) => {
+      if (measurementMode) {
+        handleMeasurementClick(e);
+        return;
+      }
       if (isPanning) return;
       const [ix, iy] = clientToImageXY(e);
       const dupFrom = e.shiftKey ? labels.find(l => l.id === selectedId) : null;
       createLabelAt(ix, iy, { duplicateFrom: dupFrom });
+    });
+
+    window.addEventListener('keydown', (evt) => {
+      if (evt.key === 'Escape' && measurementMode) {
+        if (dlg && typeof dlg.open === 'boolean' && dlg.open) {
+          return;
+        }
+        evt.preventDefault();
+        if (measurementStart || measurementResult) {
+          clearMeasurement();
+        } else {
+          setMeasurementMode(false);
+        }
+      }
     });
 
     function createLabelAt(ix, iy, { duplicateFrom = null, kind = null, iconId = null } = {}) {
@@ -1329,6 +1506,7 @@
 
     function allowLabelDrop(evt) {
       if (!evt.dataTransfer) return;
+      if (measurementMode) return;
       const types = Array.from(evt.dataTransfer.types || []);
       if (types.includes('application/x-hexlabel')) {
         evt.preventDefault();
@@ -1350,6 +1528,7 @@
       viewport.classList.remove('droppable');
       if (!marker) return;
       evt.preventDefault();
+      if (measurementMode) return;
       const rect = mapImg.getBoundingClientRect();
       if (evt.clientX < rect.left || evt.clientX > rect.right || evt.clientY < rect.top || evt.clientY > rect.bottom) {
         return;
