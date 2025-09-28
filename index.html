@@ -29,6 +29,7 @@
     .canvas-wrap { position:absolute; inset:0; transform-origin: 0 0; }
     .canvas-wrap img { display:block; max-width:none; user-select:none; }
     .svg-overlay { position:absolute; inset:0; pointer-events:none; }
+    .overlay-hit { pointer-events: all; }
 
     h1 { font-size: 16px; margin: 0 0 6px; color: var(--accent); }
     h2 { font-size: 13px; margin: 14px 0 6px; color: var(--accent); }
@@ -880,7 +881,12 @@
       const items = labels.map(l => l?.kind === 'icon' ? iconNode(l) : labelNode(l, fs, padding)).join('');
       const gridSvg = drawGrid();
       const measurementSvg = drawMeasurement();
-      overlay.innerHTML = `<g id="grid">${gridSvg}</g><g id="labels">${items}</g><g id="measurement" class="measurement-overlay">${measurementSvg}</g>`;
+      const hitWidth = mapImg.naturalWidth || mapImg.width || 0;
+      const hitHeight = mapImg.naturalHeight || mapImg.height || 0;
+      const overlayHit = (hitWidth && hitHeight)
+        ? `<rect class="overlay-hit" x="0" y="0" width="${hitWidth}" height="${hitHeight}" fill="transparent" pointer-events="all" />`
+        : '';
+      overlay.innerHTML = `${overlayHit}<g id="grid">${gridSvg}</g><g id="labels">${items}</g><g id="measurement" class="measurement-overlay">${measurementSvg}</g>`;
       // reattach events for labels
       overlay.querySelectorAll('.map-item').forEach(g => {
         g.addEventListener('click', (e) => {
