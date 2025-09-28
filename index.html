@@ -957,21 +957,17 @@
         pieces.push(`<circle cx="${cell.x}" cy="${cell.y}" r="${markerRadius}" />`);
       });
       if (totalHexDistance > 0) {
-        let labelX = resolvedCells[resolvedCells.length - 1].x;
-        let labelY = resolvedCells[resolvedCells.length - 1].y;
-        if (totalPixelLength > 0) {
-          const half = totalPixelLength / 2;
-          let traversed = 0;
-          for (let i = 0; i < segmentPixelLengths.length; i++) {
-            const seg = segmentPixelLengths[i];
-            if (traversed + seg.length >= half) {
-              const remain = half - traversed;
-              const ratio = seg.length === 0 ? 0 : remain / seg.length;
-              labelX = seg.start.x + seg.dx * ratio;
-              labelY = seg.start.y + seg.dy * ratio;
-              break;
-            }
-            traversed += seg.length;
+        const endCell = resolvedCells[resolvedCells.length - 1];
+        let labelX = endCell.x;
+        let labelY = endCell.y;
+        if (segmentPixelLengths.length) {
+          const lastSeg = segmentPixelLengths[segmentPixelLengths.length - 1];
+          if (lastSeg.length > 0) {
+            const offset = markerRadius + 18;
+            const nx = lastSeg.dx / lastSeg.length;
+            const ny = lastSeg.dy / lastSeg.length;
+            labelX = endCell.x + nx * offset;
+            labelY = endCell.y + ny * offset;
           }
         }
         const miles = totalHexDistance * 6;
