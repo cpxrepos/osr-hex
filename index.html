@@ -226,8 +226,8 @@
     let selectedId = null;
 
     let measurementMode = false;
-    let measurementStart = null;
-    let measurementResult = null;
+    let measurementPoints = [];
+    let measurementFinalized = false;
 
     const undoStack = [];
     const redoStack = [];
@@ -506,23 +506,30 @@
         measureToggle.setAttribute('aria-pressed', measurementMode ? 'true' : 'false');
       }
       if (clearMeasurementBtn) {
-        clearMeasurementBtn.disabled = !(measurementMode && (measurementStart || measurementResult));
+        clearMeasurementBtn.disabled = !(measurementMode && measurementPoints.length);
       }
     }
 
     function setMeasurementMode(enabled) {
-      measurementMode = Boolean(enabled);
-      if (!measurementMode) {
-        measurementStart = null;
-        measurementResult = null;
+      const next = Boolean(enabled);
+      if (measurementMode === next) {
+        updateMeasurementControls();
+        draw();
+        return;
       }
+      measurementMode = next;
+      if (!measurementMode) {
+        clearMeasurement();
+        return;
+      }
+      measurementFinalized = false;
       updateMeasurementControls();
       draw();
     }
 
     function clearMeasurement() {
-      measurementStart = null;
-      measurementResult = null;
+      measurementPoints = [];
+      measurementFinalized = false;
       updateMeasurementControls();
       draw();
     }
@@ -788,7 +795,7 @@
     if (clearMeasurementBtn) {
       clearMeasurementBtn.addEventListener('click', () => {
         if (!measurementMode) return;
-        if (!measurementStart && !measurementResult) return;
+        if (!measurementPoints.length) return;
         clearMeasurement();
       });
     }
@@ -902,37 +909,76 @@
     }
 
     function drawMeasurement() {
-      if ((!measurementMode && !measurementStart && !measurementResult) || !gridInfo) return '';
+      if ((!measurementMode && measurementPoints.length === 0) || !gridInfo) return '';
+      if (!measurementPoints.length) return '';
       const pieces = [];
       const markerRadius = gridInfo ? Math.max(6, gridInfo.radius * 0.25) : 6;
-      if (measurementStart) {
-        const startCell = findGridCell(measurementStart.col, measurementStart.row);
-        if (startCell) {
-          pieces.push(`<circle cx="${startCell.x}" cy="${startCell.y}" r="${markerRadius}" />`);
-        } else {
-          measurementStart = null;
+      const cleanedPoints = [];
+      const resolvedCells = [];
+      let stateChanged = false;
+      for (const pt of measurementPoints) {
+        const cell = findGridCell(pt.col, pt.row);
+        if (!cell) {
+          stateChanged = true;
+          continue;
+        }
+        cleanedPoints.push(pt);
+        resolvedCells.push(cell);
+      }
+      if (stateChanged) {
+        measurementPoints = cleanedPoints;
+        if (!measurementPoints.length) {
+          measurementFinalized = false;
           updateMeasurementControls();
+          return '';
         }
       }
-      if (measurementResult) {
-        const { startCol, startRow, endCol, endRow, hexDistance } = measurementResult;
-        const startCell = findGridCell(startCol, startRow);
-        const endCell = findGridCell(endCol, endRow);
-        if (!startCell || !endCell) {
-          measurementResult = null;
-          updateMeasurementControls();
-          return pieces.join('');
-        }
+      if (resolvedCells.length === 1) {
+        const only = resolvedCells[0];
+        pieces.push(`<circle cx="${only.x}" cy="${only.y}" r="${markerRadius}" />`);
+        return pieces.join('');
+      }
+      let totalHexDistance = 0;
+      const segmentPixelLengths = [];
+      let totalPixelLength = 0;
+      for (let i = 0; i < resolvedCells.length - 1; i++) {
+        const startCell = resolvedCells[i];
+        const endCell = resolvedCells[i + 1];
         pieces.push(`<line x1="${startCell.x}" y1="${startCell.y}" x2="${endCell.x}" y2="${endCell.y}" />`);
-        pieces.push(`<circle cx="${startCell.x}" cy="${startCell.y}" r="${markerRadius}" />`);
-        pieces.push(`<circle cx="${endCell.x}" cy="${endCell.y}" r="${markerRadius}" />`);
-        const midX = (startCell.x + endCell.x) / 2;
-        const midY = (startCell.y + endCell.y) / 2;
-        const miles = hexDistance * 6;
-        const travelPoints = hexDistance * 2;
+        const segDistance = hexDistanceCells(measurementPoints[i], measurementPoints[i + 1]);
+        totalHexDistance += segDistance;
+        const dx = endCell.x - startCell.x;
+        const dy = endCell.y - startCell.y;
+        const pixelLength = Math.hypot(dx, dy);
+        segmentPixelLengths.push({ start: startCell, dx, dy, length: pixelLength });
+        totalPixelLength += pixelLength;
+      }
+      resolvedCells.forEach(cell => {
+        pieces.push(`<circle cx="${cell.x}" cy="${cell.y}" r="${markerRadius}" />`);
+      });
+      if (totalHexDistance > 0) {
+        let labelX = resolvedCells[resolvedCells.length - 1].x;
+        let labelY = resolvedCells[resolvedCells.length - 1].y;
+        if (totalPixelLength > 0) {
+          const half = totalPixelLength / 2;
+          let traversed = 0;
+          for (let i = 0; i < segmentPixelLengths.length; i++) {
+            const seg = segmentPixelLengths[i];
+            if (traversed + seg.length >= half) {
+              const remain = half - traversed;
+              const ratio = seg.length === 0 ? 0 : remain / seg.length;
+              labelX = seg.start.x + seg.dx * ratio;
+              labelY = seg.start.y + seg.dy * ratio;
+              break;
+            }
+            traversed += seg.length;
+          }
+        }
+        const miles = totalHexDistance * 6;
+        const travelPoints = totalHexDistance * 2;
         const milesLabel = `${miles.toLocaleString()} mile${miles === 1 ? '' : 's'}`;
         const travelPointsLabel = `${travelPoints.toLocaleString()} Travel Point${travelPoints === 1 ? '' : 's'}`;
-        pieces.push(`<text x="${midX}" y="${midY - 12}">${milesLabel}<tspan x="${midX}" dy="14">${travelPointsLabel}</tspan></text>`);
+        pieces.push(`<text x="${labelX}" y="${labelY - 12}">${milesLabel}<tspan x="${labelX}" dy="14">${travelPointsLabel}</tspan></text>`);
       }
       return pieces.join('');
     }
@@ -941,33 +987,22 @@
       evt.stopPropagation();
       evt.preventDefault();
       if (!measurementMode || !gridInfo || isPanning) return;
+      if (measurementFinalized) {
+        measurementPoints = [];
+        measurementFinalized = false;
+      }
       const [ix, iy] = clientToImageXY(evt);
       const snap = snapToGrid(ix, iy);
       if (!snap) return;
-      if (!measurementStart) {
-        measurementStart = { col: snap.col, row: snap.row };
-        measurementResult = null;
-        updateMeasurementControls();
-        draw();
-        return;
+      const lastPoint = measurementPoints[measurementPoints.length - 1];
+      if (!lastPoint || lastPoint.col !== snap.col || lastPoint.row !== snap.row) {
+        measurementPoints.push({ col: snap.col, row: snap.row });
       }
-      const startRef = measurementStart;
-      const endRef = { col: snap.col, row: snap.row };
-      measurementResult = createMeasurementResult(startRef, endRef);
-      measurementStart = null;
+      if (evt.detail > 1 && measurementPoints.length >= 2) {
+        measurementFinalized = true;
+      }
       updateMeasurementControls();
       draw();
-    }
-
-    function createMeasurementResult(startCell, endCell) {
-      const hexDistance = hexDistanceCells(startCell, endCell);
-      return {
-        startCol: startCell.col,
-        startRow: startCell.row,
-        endCol: endCell.col,
-        endRow: endCell.row,
-        hexDistance
-      };
     }
 
     function hexDistanceCells(a, b) {
@@ -1075,7 +1110,7 @@
           return;
         }
         evt.preventDefault();
-        if (measurementStart || measurementResult) {
+        if (measurementPoints.length) {
           clearMeasurement();
         } else {
           setMeasurementMode(false);
@@ -1371,6 +1406,7 @@
 
     viewport.addEventListener('pointerdown', (evt) => {
       if (evt.button !== 0) return;
+      if (measurementMode) return;
       const target = evt.target;
       if (target.closest('svg') && target.closest('.map-item')) return; // let marker dragging handle it
       isPanning = true;
