@@ -909,7 +909,7 @@
         }
       }
       if (measurementResult) {
-        const { startCol, startRow, endCol, endRow, hexDistance, deltaCols, deltaRows } = measurementResult;
+        const { startCol, startRow, endCol, endRow, hexDistance } = measurementResult;
         const startCell = findGridCell(startCol, startRow);
         const endCell = findGridCell(endCol, endRow);
         if (!startCell || !endCell) {
@@ -917,16 +917,16 @@
           updateMeasurementControls();
           return pieces.join('');
         }
-        const pixelDistance = Math.hypot(endCell.x - startCell.x, endCell.y - startCell.y);
         pieces.push(`<line x1="${startCell.x}" y1="${startCell.y}" x2="${endCell.x}" y2="${endCell.y}" />`);
         pieces.push(`<circle cx="${startCell.x}" cy="${startCell.y}" r="${markerRadius}" />`);
         pieces.push(`<circle cx="${endCell.x}" cy="${endCell.y}" r="${markerRadius}" />`);
         const midX = (startCell.x + endCell.x) / 2;
         const midY = (startCell.y + endCell.y) / 2;
-        const hexLabel = `${hexDistance} hex${hexDistance === 1 ? '' : 'es'}`;
-        const pixelLabel = `${pixelDistance.toFixed(1)} px`;
-        const deltaLabel = `Δcol ${formatDelta(deltaCols)}, Δrow ${formatDelta(deltaRows)}`;
-        pieces.push(`<text x="${midX}" y="${midY - 12}">${hexLabel}<tspan x="${midX}" dy="14">${pixelLabel}</tspan><tspan x="${midX}" dy="14">${deltaLabel}</tspan></text>`);
+        const miles = hexDistance * 6;
+        const travelPoints = hexDistance * 2;
+        const milesLabel = `${miles.toLocaleString()} mile${miles === 1 ? '' : 's'}`;
+        const travelPointsLabel = `${travelPoints.toLocaleString()} Travel Point${travelPoints === 1 ? '' : 's'}`;
+        pieces.push(`<text x="${midX}" y="${midY - 12}">${milesLabel}<tspan x="${midX}" dy="14">${travelPointsLabel}</tspan></text>`);
       }
       return pieces.join('');
     }
@@ -955,16 +955,12 @@
 
     function createMeasurementResult(startCell, endCell) {
       const hexDistance = hexDistanceCells(startCell, endCell);
-      const deltaCols = endCell.col - startCell.col;
-      const deltaRows = endCell.row - startCell.row;
       return {
         startCol: startCell.col,
         startRow: startCell.row,
         endCol: endCell.col,
         endRow: endCell.row,
-        hexDistance,
-        deltaCols,
-        deltaRows
+        hexDistance
       };
     }
 
@@ -979,10 +975,6 @@
       const z = row - ((col - (col & 1)) / 2);
       const y = -x - z;
       return { x, y, z };
-    }
-
-    function formatDelta(value) {
-      return value >= 0 ? `+${value}` : `${value}`;
     }
 
     function findGridCell(col, row) {
